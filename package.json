@@ -101,7 +101,7 @@
     "compile": "tsc -p ./",
     "test": "npm run compile && node scripts/validator-test.js",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package",
+    "package": "vsce package --readme-path README.extension.md",
     "smoke-test": "node scripts/smoke-test.js",
     "smoke-test:errors": "node scripts/smoke-test.js --errors-only"
   },

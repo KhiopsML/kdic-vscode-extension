@@ -146,7 +146,7 @@ If you want native Khiops diagnostics, install the Khiops binary and configure `
 ```bash
 npm install
 npm run compile
-npx vsce package
+npm run package
 # produces khiops-kdic-0.1.3.vsix
 ```
 

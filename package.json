@@ -2,12 +2,12 @@
   "name": "khiops-kdic",
   "displayName": "Khiops Dictionary (.kdic)",
   "description": "Syntax highlighting and IntelliSense for Khiops dictionary files (.kdic)",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "khiopsml",
   "license": "BSD-3-Clause-Clear",
   "repository": {
     "type": "git",
-    "url": "https://github.com/KhiopsML/khiops.git"
+    "url": "https://github.com/KhiopsML/kdic-vscode-extension.git"
   },
   "engines": {
     "vscode": "^1.79.0"
@@ -58,7 +58,7 @@
           "type": "string",
           "order": 5,
           "default": "",
-          "description": "Explicit path to the Khiops binary. If empty, auto-detects from KHIOPS_HOME/bin/khiops (or KHIOPS_HOME\\bin\\khiops.cmd on Windows) and /usr/bin/khiops on macOS/Linux."
+          "description": "Path to the Khiops executable or its containing directory. If a directory is provided, the extension looks for MODL on macOS, MODL_openmpi on Linux, or MODL.exe on Windows. If empty, macOS uses its Khiops.app path, Linux uses /usr/bin/MODL_openmpi, and Windows checks KHIOPS_HOME/bin."
         },
         "kdic.enableKhiopsValidation": {
           "type": "boolean",
@@ -99,8 +99,9 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test": "npm run compile && node scripts/validator-test.js",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package",
+    "package": "vsce package --readme-path README.extension.md",
     "smoke-test": "node scripts/smoke-test.js",
     "smoke-test:errors": "node scripts/smoke-test.js --errors-only"
   },

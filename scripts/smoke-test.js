@@ -23,35 +23,32 @@ if (!fs.existsSync(validatorPath)) {
   console.error('Compiled validator not found. Run `npm run compile` first.');
   process.exit(2);
 }
-const { validate, buildTypeMaps, stripLineComments, extractDictionaryNames, KDIC_TYPES } = require(validatorPath);
+const { validate, buildTypeMaps } = require(validatorPath);
 
 // ── Extract DERIVATION_RULES from extension source to build type maps ────────
 const srcPath  = path.join(__dirname, '..', 'src', 'extension.ts');
 const src      = fs.readFileSync(srcPath, 'utf8');
 
-const RETURN_TYPE_MAP = new Map();
-const PARAM_TYPE_MAP  = new Map();
+const rules = [];
+for (const [index, line] of src.split('\n').entries()) {
+  // Every derivation rule is currently one object per line. Parse each field
+  // by name so harmless property reordering cannot silently break the CLI.
+  if (!line.includes('label:') || (!line.includes('returnType:') && !line.includes('signature:'))) continue;
 
-const typeAlt = KDIC_TYPES.join('|');
-const typeRe  = new RegExp('^(?:Block\\((' + typeAlt + ')\\)|(' + typeAlt + '))\\s+');
-
-for (const line of src.split('\n')) {
-  const m = line.match(/label:\s*'([^']+)'.*?returnType:\s*'([^']+)'.*?signature:\s*'([^']+)'/);
-  if (!m) continue;
-  const [, label, returnType, signature] = m;
-
-  RETURN_TYPE_MAP.set(label, returnType);
-
-  const inner = signature.match(/\((.+)\)/)?.[1] ?? '';
-  const paramTypes = inner.split(',').map(part => {
-    part = part.trim();
-    if (part === '...') return '...';
-    const tm = typeRe.exec(part);
-    if (!tm) return 'any';
-    return tm[1] ? `Block(${tm[1]})` : tm[2];
-  });
-  PARAM_TYPE_MAP.set(label, paramTypes);
+  const label = line.match(/\blabel:\s*'([^']+)'/)?.[1];
+  const returnType = line.match(/\breturnType:\s*'([^']+)'/)?.[1];
+  const signature = line.match(/\bsignature:\s*'([^']+)'/)?.[1];
+  if (!label || !returnType || !signature) {
+    throw new Error(`Could not parse derivation rule in src/extension.ts at line ${index + 1}.`);
+  }
+  rules.push({ label, returnType, signature });
 }
+
+if (rules.length === 0) {
+  throw new Error('No derivation rules were found in src/extension.ts.');
+}
+
+const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP } = buildTypeMaps(rules);
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 const args        = process.argv.slice(2);

@@ -16,7 +16,7 @@
  *   Completion + hover data for the kdic language tokens (keywords and types).
  *
  * DERIVATION_RULES
- *   Completion + hover + type-checking data for the ~100 built-in derivation
+ *   Completion + hover + type-checking data for the built-in derivation
  *   rules.  Each entry carries a human-readable `signature` and a `returnType`
  *   used by the type checker.
  *
@@ -132,15 +132,15 @@ const NATIVE_TYPES: CompletionEntry[] = [
     detail: 'native type',
     documentation: 'Timestamp with timezone. Format: <TimestampTZFormat="YYYY-MM-DD_HH:MM:SS.zzzzz">',
   },
-  {
-    label: 'TextList',
-    kind: vscode.CompletionItemKind.TypeParameter,
-    detail: 'native type',
-    documentation: 'List of Text values, derived from a multi-table schema.',
-  },
 ];
 
 const ADVANCED_TYPES: CompletionEntry[] = [
+  {
+    label: 'TextList',
+    kind: vscode.CompletionItemKind.TypeParameter,
+    detail: 'advanced type',
+    documentation: 'List of Text values, derived from a multi-table schema.',
+  },
   {
     label: 'Entity',
     kind: vscode.CompletionItemKind.TypeParameter,
@@ -154,12 +154,6 @@ const ADVANCED_TYPES: CompletionEntry[] = [
     detail: 'advanced type',
     documentation: 'Represents a 0-n relationship in a multi-table schema.\n\nSyntax: Table(<DictionaryName>) <varName>;',
     insertText: 'Table(${1:DictionaryName}) ${2:varName};',
-  },
-  {
-    label: 'TextList',
-    kind: vscode.CompletionItemKind.TypeParameter,
-    detail: 'advanced type',
-    documentation: 'Derived from a list of Text variables in a multi-table schema.',
   },
   {
     label: 'Structure',
@@ -202,6 +196,7 @@ const DERIVATION_RULES: FunctionEntry[] = [
   { label: 'IfT', kind: vscode.CompletionItemKind.Function, detail: 'logical', returnType: 'Time', signature: 'IfT(Numerical test, Time valueTrue, Time valueFalse)', documentation: 'Ternary operator returning second operand (true) or third operand (false) for Time values, according to the condition in first operand.' },
   { label: 'IfTS', kind: vscode.CompletionItemKind.Function, detail: 'logical', returnType: 'Timestamp', signature: 'IfTS(Numerical test, Timestamp valueTrue, Timestamp valueFalse)', documentation: 'Ternary operator returning second operand (true) or third operand (false) for Timestamp values, according to the condition in first operand.' },
   { label: 'IfTSTZ', kind: vscode.CompletionItemKind.Function, detail: 'logical', returnType: 'TimestampTZ', signature: 'IfTSTZ(Numerical test, TimestampTZ valueTrue, TimestampTZ valueFalse)', documentation: 'Ternary operator returning second operand (true) or third operand (false) for TimestampTZ values, according to the condition in first operand.' },
+  { label: 'IfText', kind: vscode.CompletionItemKind.Function, detail: 'logical', returnType: 'Text', signature: 'IfText(Numerical test, Text valueTrue, Text valueFalse)', documentation: 'Ternary operator returning second operand (true) or third operand (false) for Text values, according to the condition in first operand.' },
   { label: 'Switch', kind: vscode.CompletionItemKind.Function, detail: 'logical', returnType: 'Numerical', signature: 'Switch(Numerical test, Numerical valueDefault, Numerical value1, ...)', documentation: 'Switch operator that returns the numerical value corresponding to the index given by the test operand if it is between 1 and K. The default value is returned if the index is outside the bounds.' },
   { label: 'SwitchC', kind: vscode.CompletionItemKind.Function, detail: 'logical', returnType: 'Categorical', signature: 'SwitchC(Numerical test, Categorical valueDefault, Categorical value1, ...)', documentation: 'Switch operator that returns the categorical value corresponding to the index given by the test operand if it is between 1 and K. The default value is returned if the index is outside the bounds.' },
 
@@ -549,7 +544,10 @@ function isInsideDictionaryBlock(document: vscode.TextDocument, position: vscode
  * indicating a derivation rule context.
  */
 function isInDerivationContext(linePrefix: string): boolean {
-  const withoutMeta = linePrefix.replace(/<[^>]*>/g, '');
+  const withoutMeta = linePrefix.replace(
+    /<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"(?:[^"]|"")*"|[^"<>\s]*))?>/g,
+    '',
+  );
   return withoutMeta.includes('=');
 }
 
@@ -604,12 +602,16 @@ function logKhiopsTrace(outputChannel: vscode.OutputChannel, message: string): v
 
 /**
  * Finds the khiops binary path.
- * Priority: setting > KHIOPS_HOME > platform fallback
+ * Priority: setting > platform-specific automatic fallback
  */
 function findKhiopsBinary(log: vscode.OutputChannel): string | undefined {
   const config = vscode.workspace.getConfiguration('kdic');
   const explicit = config.get<string>('khiopsPath', '').trim();
-  const binaryName = process.platform === 'win32' ? 'khiops.cmd' : 'khiops';
+  const binaryName = process.platform === 'win32'
+    ? 'MODL.exe'
+    : process.platform === 'darwin'
+      ? 'MODL'
+      : 'MODL_openmpi';
   logKhiopsTrace(log, `[Khiops] kdic.khiopsPath setting = "${explicit}"`);
   logKhiopsTrace(log, `[Khiops] KHIOPS_HOME env = "${process.env['KHIOPS_HOME'] || ''}"`);
   logKhiopsTrace(log, `[Khiops] Expected binary name = "${binaryName}"`);
@@ -631,10 +633,10 @@ function findKhiopsBinary(log: vscode.OutputChannel): string | undefined {
     return undefined;
   }
 
-  // No explicit setting - try KHIOPS_HOME environment variable
+  // No explicit setting - try KHIOPS_HOME/bin/<platform executable> on Windows.
 
   const khiopsHome = process.env['KHIOPS_HOME'];
-  if (khiopsHome) {
+  if (khiopsHome && process.platform === 'win32') {
     const bin = path.join(khiopsHome, 'bin', binaryName);
     logKhiopsTrace(log, `[Khiops] Trying KHIOPS_HOME: ${bin}`);
     if (fs.existsSync(bin)) {
@@ -643,11 +645,16 @@ function findKhiopsBinary(log: vscode.OutputChannel): string | undefined {
     }
   }
 
-  if (process.platform !== 'win32') {
-    logKhiopsTrace(log, `[Khiops] Trying /usr/bin/khiops`);
-    if (fs.existsSync('/usr/bin/khiops')) {
-      logKhiopsTrace(log, `[Khiops] Found binary: /usr/bin/khiops`);
-      return '/usr/bin/khiops';
+  const platformFallback = process.platform === 'darwin'
+    ? '/Applications/Khiops.app/Contents/Resources/bin/MODL'
+    : process.platform === 'linux'
+      ? '/usr/bin/MODL_openmpi'
+      : undefined;
+  if (platformFallback) {
+    logKhiopsTrace(log, `[Khiops] Trying ${platformFallback}`);
+    if (fs.existsSync(platformFallback)) {
+      logKhiopsTrace(log, `[Khiops] Found binary: ${platformFallback}`);
+      return platformFallback;
     }
   }
 
@@ -811,7 +818,6 @@ export function activate(context: vscode.ExtensionContext): void {
         position: vscode.Position,
       ): vscode.CompletionItem[] {
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
-        const trimmedPrefix = linePrefix.trimStart();
 
         // Skip completions inside comments
         const commentIdx = linePrefix.indexOf('//');
@@ -986,7 +992,7 @@ export function activate(context: vscode.ExtensionContext): void {
   refreshRuntimeState();
 
   // Always register listeners and branch on live runtime state.
-  let validateTimer: ReturnType<typeof setTimeout> | undefined;
+  const validateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const saveReasons = new Map<string, vscode.TextDocumentSaveReason>();
 
   const revalidateAllOpenKdicDocuments = (): void => {
@@ -1029,9 +1035,22 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument(e => {
       if (e.document.languageId !== 'kdic') { return; }
 
-      clearTimeout(validateTimer);
+      const docKey = e.document.uri.toString();
+      const pendingTimer = validateTimers.get(docKey);
+      if (pendingTimer !== undefined) {
+        clearTimeout(pendingTimer);
+        validateTimers.delete(docKey);
+      }
       if (runtimeState.useExtension) {
-        validateTimer = setTimeout(() => validateDocument(e.document, diagnostics), 300);
+        const timer = setTimeout(() => {
+          validateTimers.delete(docKey);
+          if (runtimeState.useExtension) {
+            validateDocument(e.document, diagnostics);
+          } else {
+            diagnostics.delete(e.document.uri);
+          }
+        }, 300);
+        validateTimers.set(docKey, timer);
       } else {
         diagnostics.delete(e.document.uri);
       }
@@ -1064,6 +1083,12 @@ export function activate(context: vscode.ExtensionContext): void {
       runKhiopsValidation(doc, runtimeState.khiopsPath, khiopsDiags, outputChannel);
     }),
     vscode.workspace.onDidCloseTextDocument(doc => {
+      const docKey = doc.uri.toString();
+      const pendingTimer = validateTimers.get(docKey);
+      if (pendingTimer !== undefined) {
+        clearTimeout(pendingTimer);
+        validateTimers.delete(docKey);
+      }
       diagnostics.delete(doc.uri);
       khiopsDiags.delete(doc.uri);
     }),

@@ -1,0 +1,9 @@
+.gitignore
+.github/**
+.vscode/**
+node_modules/**
+src/**
+scripts/**
+test.kdic
+tsconfig.json
+package-lock.json

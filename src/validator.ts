@@ -125,6 +125,29 @@ export function buildTypeMaps(
   return { paramTypeMap, returnTypeMap };
 }
 
+function findUnquotedChar(text: string, target: string): number {
+  let inBt = false;
+  let inDq = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inBt) {
+      if (ch === '`') { inBt = false; }
+    } else if (inDq) {
+      if (ch === '"') {
+        if (i + 1 < text.length && text[i + 1] === '"') { i++; }
+        else { inDq = false; }
+      }
+    } else if (ch === '`') {
+      inBt = true;
+    } else if (ch === '"') {
+      inDq = true;
+    } else if (ch === target) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 // ─────────────────────────── Core validation ────────────────────────────────
 
 /**
@@ -202,20 +225,78 @@ export function validate(
     }
 
     const blockStart = braceOpen + 1;
-    const blockText = text.slice(blockStart, j - 1);
+    let blockEnd = j - 1;
+    if (depth > 0) {
+      const pos = document.positionAt(braceOpen);
+      diags.push({
+        line: pos.line, col: pos.character, endCol: pos.character + 1,
+        severity: Severity.Error,
+        message: "Unclosed '{' in dictionary or variable block.",
+      });
+      blockEnd = text.length;
+    }
+    const blockText = text.slice(blockStart, blockEnd);
 
     // Collect variable types declared in this dictionary block
     const vars = new Map<string, string>();
+    const varDeclInfo = new Map<string, {
+      type: string;
+      index: number;
+      typeOffset: number;
+      derived: boolean;
+    }>();
+    const relationRefs: Array<{ rawName: string; offset: number }> = [];
     varDeclRe.lastIndex = 0;
     let vm: RegExpExecArray | null;
     while ((vm = varDeclRe.exec(blockText)) !== null) {
       const raw = vm[2];
       const name = raw.startsWith('`') ? raw.slice(1, -1).replace(/``/g, '`') : raw;
       vars.set(name, vm[1]);
+      varDeclInfo.set(name, {
+        type: vm[1],
+        index: vm.index,
+        typeOffset: vm[0].indexOf(vm[1]),
+        derived: findUnquotedChar(vm[0], '=') !== -1,
+      });
+
+      const relationMatch = vm[0].match(
+        /^(?:Unused\s+)?(?:Table|Entity)\s*\((`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)\)/,
+      );
+      if (relationMatch) {
+        relationRefs.push({
+          rawName: relationMatch[1],
+          offset: vm.index + relationMatch[0].indexOf(relationMatch[1]),
+        });
+      }
+
+      if (name.length > 128) {
+        const nameOffset = vm[0].indexOf(raw);
+        const pos = document.positionAt(blockStart + vm.index + nameOffset);
+        diags.push({
+          line: pos.line, col: pos.character, endCol: pos.character + raw.length,
+          severity: Severity.Error,
+          message: `Variable name '${name}' exceeds the 128-character limit.`,
+        });
+      }
     }
 
     // ── Key-field type check ──────────────────────────────────────────────
     const headerText = text.slice(i, braceOpen);
+    const dictionaryHeaderRe = /\bDictionary\s+(`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)/;
+    const dictionaryHeader = dictionaryHeaderRe.exec(headerText);
+    if (dictionaryHeader) {
+      const rawName = dictionaryHeader[1];
+      const dictName = rawName.startsWith('`') ? rawName.slice(1, -1).replace(/``/g, '`') : rawName;
+      if (dictName.length > 128) {
+        const nameOffset = dictionaryHeader.index + dictionaryHeader[0].indexOf(rawName);
+        const pos = document.positionAt(i + nameOffset);
+        diags.push({
+          line: pos.line, col: pos.character, endCol: pos.character + rawName.length,
+          severity: Severity.Error,
+          message: `Dictionary name '${dictName}' exceeds the 128-character limit.`,
+        });
+      }
+    }
     const keyListRe = /\bDictionary\s+(?:`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/;
     const klMatch = keyListRe.exec(headerText);
     if (klMatch) {
@@ -224,40 +305,37 @@ export function validate(
         return t.startsWith('`') ? t.slice(1, -1).replace(/``/g, '`') : t;
       }).filter(k => k.length > 0);
       for (const keyField of keyFields) {
-        const keyType = vars.get(keyField);
-        if (keyType === undefined || keyType === 'Categorical') { continue; }
-        varDeclRe.lastIndex = 0;
-        let km: RegExpExecArray | null;
-        while ((km = varDeclRe.exec(blockText)) !== null) {
-          const raw = km[2];
-          const kname = raw.startsWith('`') ? raw.slice(1, -1).replace(/``/g, '`') : raw;
-          if (kname === keyField) {
-            const pos = document.positionAt(blockStart + km.index);
-            diags.push({
-              line: pos.line, col: pos.character,
-              endCol: pos.character + km[1].length,
-              severity: Severity.Error,
-              message: `Key field '${keyField}' must be 'Categorical' but is declared as '${keyType}'.`,
-            });
-            break;
-          }
+        const declaration = varDeclInfo.get(keyField);
+        if (!declaration) { continue; }
+        const pos = document.positionAt(blockStart + declaration.index + declaration.typeOffset);
+        if (declaration.type !== 'Categorical') {
+          diags.push({
+            line: pos.line, col: pos.character,
+            endCol: pos.character + declaration.type.length,
+            severity: Severity.Error,
+            message: `Key field '${keyField}' must be 'Categorical' but is declared as '${declaration.type}'.`,
+          });
+        }
+        if (declaration.derived) {
+          diags.push({
+            line: pos.line, col: pos.character,
+            endCol: pos.character + declaration.type.length,
+            severity: Severity.Error,
+            message: `Key field '${keyField}' must not be derived from a rule.`,
+          });
         }
       }
     }
 
     // ── Unknown dictionary check ──────────────────────────────────────────
-    const relRefRe = /\b(?:Table|Entity)\s*\((`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)\)/g;
-    relRefRe.lastIndex = 0;
-    let rr: RegExpExecArray | null;
-    while ((rr = relRefRe.exec(blockText)) !== null) {
-      const rawName = rr[1];
+    for (const relation of relationRefs) {
+      const rawName = relation.rawName;
       const dictName = rawName.startsWith('`') ? rawName.slice(1, -1).replace(/``/g, '`') : rawName;
       if (knownDicts.has(dictName)) { continue; }
-      const nameOffsetInMatch = rr[0].indexOf(rr[1]);
-      const pos = document.positionAt(blockStart + rr.index + nameOffsetInMatch);
+      const pos = document.positionAt(blockStart + relation.offset);
       diags.push({
         line: pos.line, col: pos.character,
-        endCol: pos.character + rr[1].length,
+        endCol: pos.character + rawName.length,
         severity: Severity.Error,
         message: `Dictionary '${dictName}' is not declared in this file.`,
       });
@@ -346,17 +424,26 @@ export function validate(
       }
     }
 
-    i = j;
+    i = depth === 0 ? j : text.length;
   }
 
   // ── Line-level pass ───────────────────────────────────────────────────────
   const metaOnlyRe = /^(<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"[^"]*(?:""[^"]*)*"|[^"<>\s]*))?>\ *)+$/;
+  const identifierPattern = '(?:`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)';
+  const variableBlockMemberRe = new RegExp(
+    '^(?:Unused\\s+)?(Numerical|Categorical|Table)(?:\\([^)]*\\))?\\s+'
+      + identifierPattern + '(?:\\s*\\[[^\\]]*\\])?(?:\\s*=\\s*[^;]+)?\\s*;'
+      + '(?:\\s*<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"[^"]*(?:""[^"]*)*"|[^"<>\\s]*))?>)*\\s*$',
+  );
+  const variableBlockCloseRe = new RegExp(
+    '^}\\s+' + identifierPattern + '(?:\\s*=.*)?;\\s*(?:<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"[^"]*(?:""[^"]*)*"|[^"<>\\s]*))?>\\s*)*$',
+  );
   const outsidePatterns = [
     /^$/,
     /^#Khiops\b/,
     /^(Root\s+)?Dictionary\s+(`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)(\s*\([^)]*\))?(\s*<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"[^"]*(?:""[^"]*)*"|[^"<>\s]*))?>\s*)*(\s*\{)?\s*$/,
     metaOnlyRe,
-    /^\([^)]*\)\s*$/,
+    /^\([^)]*\)\s*(?:\{)?\s*$/,
     /^\{$/,
     /^\};?$/,
   ];
@@ -374,6 +461,8 @@ export function validate(
   let lineDepth = 0;
   let parenDepth = 0;
   let prevLineEndsWithAssign = false;
+  let variableBlockOpen = false;
+  let variableBlockType: string | undefined;
 
   for (let li = 0; li < document.lineCount; li++) {
     const lineRaw = document.lineAt(li).text;
@@ -384,6 +473,7 @@ export function validate(
     const effective = strippedLine.trim();
 
     const depthBefore = lineDepth;
+    let unmatchedCloseOffset = -1;
     {
       let inBt = false, inDq = false;
       for (let k = 0; k < effective.length; k++) {
@@ -398,7 +488,65 @@ export function validate(
         else if (ch === '`') { inBt = true; }
         else if (ch === '"') { inDq = true; }
         else if (ch === '{') { lineDepth++; }
-        else if (ch === '}') { lineDepth = Math.max(0, lineDepth - 1); }
+        else if (ch === '}') {
+          if (lineDepth === 0 && unmatchedCloseOffset === -1) { unmatchedCloseOffset = k; }
+          lineDepth = Math.max(0, lineDepth - 1);
+        }
+      }
+    }
+    if (unmatchedCloseOffset !== -1) {
+      const indentLen = lineRaw.length - trimmed.length;
+      diags.push({
+        line: li, col: indentLen + unmatchedCloseOffset, endCol: indentLen + unmatchedCloseOffset + 1,
+        severity: Severity.Error,
+        message: "Unmatched '}' outside a dictionary or variable block.",
+      });
+    }
+
+    if (depthBefore === 1 && effective === '{') {
+      variableBlockOpen = true;
+      variableBlockType = undefined;
+    } else if (variableBlockOpen && depthBefore === 2 && effective.startsWith('}')) {
+      if (!variableBlockCloseRe.test(effective)) {
+        const col = lineRaw.indexOf('}');
+        diags.push({
+          line: li, col, endCol: col + 1,
+          severity: Severity.Error,
+          message: "Variable block must have a name and ';' after its closing brace.",
+        });
+      }
+      variableBlockOpen = false;
+      variableBlockType = undefined;
+    } else if (variableBlockOpen && depthBefore === 2 && effective.length > 0) {
+      const memberMatch = variableBlockMemberRe.exec(effective);
+      if (memberMatch) {
+        const memberText = effective.slice(0, findUnquotedChar(effective, ';') + 1);
+        if (findUnquotedChar(memberText, '=') !== -1) {
+          const equalsCol = effective.indexOf('=');
+          diags.push({
+            line: li, col: equalsCol, endCol: equalsCol + 1,
+            severity: Severity.Error,
+            message: 'Variable block members cannot be derived individually.',
+          });
+        }
+        if (variableBlockType === undefined) {
+          variableBlockType = memberMatch[1];
+        } else if (memberMatch[1] !== variableBlockType) {
+          const typeCol = effective.indexOf(memberMatch[1]);
+          diags.push({
+            line: li, col: typeCol, endCol: typeCol + memberMatch[1].length,
+            severity: Severity.Error,
+            message: 'Variable block members must all have the same type.',
+          });
+        }
+      } else if (varDeclStartRe.test(effective)) {
+        const typeMatch = effective.match(varDeclStartRe);
+        const typeCol = typeMatch ? effective.indexOf(typeMatch[2]) : 0;
+        diags.push({
+          line: li, col: typeCol, endCol: typeCol + (typeMatch?.[2].length ?? 1),
+          severity: Severity.Error,
+          message: 'Variable block members must be Numerical, Categorical, or Table.',
+        });
       }
     }
     if (lineDepth === 0) { parenDepth = 0; prevLineEndsWithAssign = false; }

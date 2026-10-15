@@ -94,7 +94,7 @@ npm run watch     # tsc -watch -p ./  (incremental)
 
 Press **F5** in VS Code to launch an Extension Development Host.
 Smoke test: `node scripts/smoke-test.js [directory]` (requires `npm run compile` first).
-No automated test suite — validate with `test.kdic` in the dev host.
+Automated validator tests: `npm test`.
 
 ## Key conventions
 

@@ -750,15 +750,19 @@ function runKhiopsValidation(
     const scenarioContent = buildCheckScenario(kdicPath);
     const tmpDir = os.tmpdir();
     const scenarioFile = path.join(tmpDir, `kdic-check-${process.pid}.prm`);
+    const outputFile = path.join(tmpDir, `kdic-check-${process.pid}.out`);
 
     try {
       fs.writeFileSync(scenarioFile, scenarioContent, 'utf-8');
+      if (process.platform === 'win32') {
+        fs.rmSync(outputFile, { force: true });
+      }
     } catch {
       resolve();
       return;
     }
 
-    const outputDevice = process.platform === 'win32' ? 'CON' : '/dev/stdout';
+    const outputDevice = process.platform === 'win32' ? outputFile : '/dev/stdout';
     const args = ['-b', '-i', scenarioFile, '-e', outputDevice];
     logKhiopsTrace(outputChannel, `[Khiops] Running: ${khiopsPath} ${args.join(' ')}`);
     logKhiopsTrace(outputChannel, `[Khiops] Scenario file: ${scenarioFile}`);
@@ -783,6 +787,16 @@ function runKhiopsValidation(
     }
 
     cp.execFile(commandPath, args, execOptions, (err, stdout, stderr) => {
+      let fileOutput = '';
+      if (process.platform === 'win32') {
+        try {
+          fileOutput = fs.readFileSync(outputFile, 'utf-8');
+        } catch {
+          logKhiopsTrace(outputChannel, `[Khiops] Could not read output file: ${outputFile}`);
+        }
+        try { fs.unlinkSync(outputFile); } catch { /* ignore */ }
+      }
+
       // Clean up temp scenario
       try { fs.unlinkSync(scenarioFile); } catch { /* ignore */ }
 
@@ -790,13 +804,13 @@ function runKhiopsValidation(
         logKhiopsTrace(outputChannel, `[Khiops] Process error: ${err.message}`);
       }
 
-      const output = `${stdout?.toString() ?? ''}${stderr?.toString() ?? ''}`;
+      const output = `${stdout?.toString() ?? ''}${stderr?.toString() ?? ''}${fileOutput}`;
 
       if (output.trim()) {
         logKhiopsTrace(outputChannel, `[Khiops] Output:`);
         logKhiopsTrace(outputChannel, output);
       } else {
-        logKhiopsTrace(outputChannel, `[Khiops] No output (exit ok, no errors)`);
+        logKhiopsTrace(outputChannel, `[Khiops] No output captured (exit ok, no errors)`);
       }
 
       const diags = parseKhiopsErrors(output, doc.uri);

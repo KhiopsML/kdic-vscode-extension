@@ -6,8 +6,8 @@ Report common structural and type problems while editing a Khiops dictionary, wi
 
 ## Evidence and scope
 
-- **Automated verification:** `npm test` compiles the project and runs `scripts/validator-test.js`. The suite covers the named examples of comments, quoting, dictionary references, keys, semicolons, name length, braces, variable blocks, and multiline derivations. Diagnostic assertions generally match message fragments, not severity or positions.
-- **Additional verification:** representative return-type errors, argument-type errors, and undeclared-argument warnings were checked directly against the compiled validator with explicit test rule signatures. They are not persistent regression tests.
+- **Automated verification:** `npm test` compiles the project and runs `scripts/validator-test.js`. The suite covers examples of comments, quoting, dictionary references, keys, semicolons, name length, braces, variable blocks, multiline derivations, and argument scopes. Most diagnostic assertions match message fragments; the scope tests also check severity.
+- **Additional verification:** representative return-type errors were checked directly against the compiled validator with an explicit test rule signature.
 - **Implementation inspected:** `src/validator.ts`, `src/extension.ts`, and `scripts/smoke-test.js`. Other scenarios below are derived from the implementation and are not covered by the existing suite.
 - **Documented intent:** `README.md`, `README.extension.md`, and `.github/instructions/kdic-extension.instructions.md` describe best-effort structural validation; they do not claim a complete parser.
 - **Language reference:** [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/) and [variable blocks](https://khiops.org/api-docs/kdic/intro-block/). Native Khiops remains authoritative for complete semantics.
@@ -86,7 +86,7 @@ The validator SHALL check recognized variable-block members and closing declarat
 - **THEN** the validator reports the corresponding error
 
 ### Requirement: Simple derivation type checks
-The validator SHALL compare recognized simple calls with registered rule types, without claiming complete derivation analysis.
+The validator SHALL compare recognized simple calls with registered rule types, without claiming complete derivation analysis. Argument diagnostics SHALL use the current dictionary only when the operand is known to have current scope.
 
 #### Scenario: Return type mismatch
 - **WHEN** a simple call to registered `TableCount` is assigned to a `Categorical` variable
@@ -97,8 +97,24 @@ The validator SHALL compare recognized simple calls with registered rule types, 
 - **THEN** the validator reports an argument-type error
 
 #### Scenario: Missing argument variable
-- **WHEN** a simple call has a bare identifier argument with a known expected type that is not declared in the current dictionary
-- **THEN** the validator warns, except for subsequent arguments of a rule whose first parameter is a table or entity
+- **WHEN** a simple call has a current-scope bare identifier argument with a known expected type that is not declared in the current dictionary
+- **THEN** the validator reports an undeclared-variable warning
+
+#### Scenario: Secondary operand with a conflicting local name
+- **WHEN** `TableMean(achats, montant)` uses `achats` as a table and the current dictionary declares a `Categorical montant` while the secondary dictionary declares a `Numerical montant`
+- **THEN** the validator does not report an argument-type error based on the current dictionary's `montant`
+
+#### Scenario: Secondary operand absent locally
+- **WHEN** `TableMean(achats, montant)` refers to a secondary-table operand not declared in the current dictionary
+- **THEN** the validator does not warn that `montant` is undeclared in the current dictionary
+
+#### Scenario: Later current-scope operand
+- **WHEN** `TableDifference(first, second)` has `first` declared as a table and `second` declared as `Categorical` in the current dictionary
+- **THEN** the validator reports an argument-type error for `second`
+
+#### Scenario: Uncertain operand scope
+- **WHEN** a recognized simple call has an operand whose scope cannot be determined reliably
+- **THEN** the validator does not issue a type mismatch or undeclared-variable warning for that operand based on the current dictionary
 
 #### Scenario: Nested call
 - **WHEN** a derivation contains nested function calls
@@ -118,8 +134,7 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled s
 ## Divergences and open questions
 
 - The official variable-block reference requires a `VarKey` for each member. The current built-in checks do not enforce its presence, uniqueness, or validity; the regression suite accepts members without `VarKey`. Do not interpret absence of diagnostics as Khiops validity.
-- Missing key declarations, cross-table scopes, nested derivations, joins, and the complete grammar are not comprehensively validated. For a known table/entity first parameter, missing later bare arguments are skipped, but declared same-named arguments can still be checked in the current dictionary.
-- **TODO:** Avoid false argument-type errors when a secondary-table operand has the same name as a variable in the current dictionary; resolve or otherwise account for the operand's actual scope.
-- The README describes derivation argument type checking and warnings. Representative cases were checked directly, but the regression suite does not cover them or verify the production rule catalog.
+- Missing key declarations, cross-table scopes, nested derivations, joins, and the complete grammar are not comprehensively validated. For secondary or unknown-scope operands, local argument-type and undeclared-variable checks are skipped; this does not establish that the operand is valid.
+- The regression suite covers representative local and secondary-scope argument diagnostics, but does not verify the entire production rule catalog.
 - The validator accepts a `#Khiops` line and dictionary metadata as structural patterns; their precise compatibility with native Khiops is not established by the current regression tests.
 - Whether every valid quoted identifier, metadata form, multiline declaration, or sparse-block form is accepted remains unverified.

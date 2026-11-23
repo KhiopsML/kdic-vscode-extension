@@ -76,7 +76,7 @@ The built-in validator checks common problems while you edit, including:
 - Invalid derived key fields
 - Dictionary and variable names longer than 128 characters
 
-Built-in validation is intentionally structural and best-effort. The native Khiops parser remains authoritative for nested derivations, secondary-table scopes, joins, and complex block contents.
+Built-in validation is intentionally structural and best-effort. Argument checks use the current dictionary only for operands known to have current scope; secondary-scope operands and relational operands with unknown scope are not type-checked. The native Khiops parser remains authoritative for nested derivations, secondary-table scopes, joins, and complex block contents.
 
 ## Example in VS Code
 

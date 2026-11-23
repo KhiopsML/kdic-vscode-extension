@@ -50,7 +50,7 @@ import * as path from 'path';
 import * as os from 'os';
 import {
   KDIC_TYPES, Severity,
-  type KdicDiagnostic, type KdicDocument,
+  type KdicDiagnostic, type KdicDocument, type OperandScope,
   stripLineComments, extractDictionaryNames, buildTypeMaps, validate,
 } from './validator';
 
@@ -167,6 +167,7 @@ const ADVANCED_TYPES: CompletionEntry[] = [
 interface FunctionEntry extends CompletionEntry {
   signature: string;
   returnType: string;
+  operandScopes?: readonly OperandScope[];
 }
 
 const DERIVATION_RULES: FunctionEntry[] = [
@@ -316,7 +317,7 @@ const DERIVATION_RULES: FunctionEntry[] = [
   { label: 'TableEntropy', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Numerical', signature: 'TableEntropy(Table table, Categorical value)', documentation: 'Entropy of a categorical variable in a table. High when all values are equally frequent.' },
   { label: 'TableMode', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Categorical', signature: 'TableMode(Table table, Categorical value)', documentation: 'Most frequent categorical value in a table. Ties resolved by lexicographic order.' },
   { label: 'TableModeAt', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Categorical', signature: 'TableModeAt(Table table, Categorical value, Numerical rank)', documentation: 'N-th most frequent categorical value in a table.' },
-  { label: 'TableMean', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Numerical', signature: 'TableMean(Table table, Numerical value)', documentation: 'Mean of numerical values in a table (non-missing only).' },
+  { label: 'TableMean', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Numerical', signature: 'TableMean(Table table, Numerical value)', operandScopes: ["current", "secondary"], documentation: 'Mean of numerical values in a table (non-missing only).' },
   { label: 'TableStdDev', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Numerical', signature: 'TableStdDev(Table table, Numerical value)', documentation: 'Standard deviation of numerical values in a table.' },
   { label: 'TableMedian', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Numerical', signature: 'TableMedian(Table table, Numerical value)', documentation: 'Median of numerical values in a table.' },
   { label: 'TableMin', kind: vscode.CompletionItemKind.Function, detail: 'table', returnType: 'Numerical', signature: 'TableMin(Table table, Numerical value)', documentation: 'Minimum of numerical values in a table.' },
@@ -333,7 +334,7 @@ const DERIVATION_RULES: FunctionEntry[] = [
   { label: 'EntitySet', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'EntitySet(Entity entity1, Entity entity2, ...)', documentation: 'Builds a table from a set of entities sharing the same dictionary. Duplicate or missing entities are ignored.' },
   { label: 'TableUnion', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'TableUnion(Table table1, Table table2, ...)', documentation: 'Union of tables: contains entities belonging to any of the operands.' },
   { label: 'TableIntersection', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'TableIntersection(Table table1, Table table2, ...)', documentation: 'Intersection of tables: contains entities belonging to all operands.' },
-  { label: 'TableDifference', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'TableDifference(Table table1, Table table2)', documentation: 'Symmetric difference of two tables: entities belonging to either operand but not both.' },
+  { label: 'TableDifference', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'TableDifference(Table table1, Table table2)', operandScopes: ["current", "current"], documentation: 'Symmetric difference of two tables: entities belonging to either operand but not both.' },
   { label: 'TableSubUnion', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'TableSubUnion(Table table, Table subTable)', documentation: 'Union of sub-tables of a table (snowflake schema). Aggregates all nested secondary tables into one flat table.' },
   { label: 'TableSubIntersection', kind: vscode.CompletionItemKind.Function, detail: 'table management', returnType: 'Table', signature: 'TableSubIntersection(Table table, Table subTable)', documentation: 'Intersection of sub-tables of a table (snowflake schema).' },
 
@@ -561,7 +562,7 @@ function isAfterRelationalTypeParens(linePrefix: string): boolean {
 // ─────────────────────────── Type checking ────────────────────────────────────
 
 // Build type maps once from DERIVATION_RULES
-const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP } = buildTypeMaps(DERIVATION_RULES);
+const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP, paramScopeMap: PARAM_SCOPE_MAP } = buildTypeMaps(DERIVATION_RULES);
 
 /**
  * Validates a .kdic document and populates the diagnostic collection.
@@ -571,7 +572,7 @@ const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP } = buildTy
 function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection): void {
   const editor = vscode.window.activeTextEditor;
   const cursorLine = editor && editor.document === document ? editor.selection.active.line : undefined;
-  const plainDiags = validate(document, PARAM_TYPE_MAP, RETURN_TYPE_MAP, cursorLine);
+  const plainDiags = validate(document, PARAM_TYPE_MAP, RETURN_TYPE_MAP, cursorLine, PARAM_SCOPE_MAP);
   const diags = plainDiags.map((d: KdicDiagnostic) => {
     const diag = new vscode.Diagnostic(
       new vscode.Range(new vscode.Position(d.line, d.col), new vscode.Position(d.line, d.endCol)),

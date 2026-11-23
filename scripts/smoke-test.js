@@ -41,14 +41,25 @@ for (const [index, line] of src.split('\n').entries()) {
   if (!label || !returnType || !signature) {
     throw new Error(`Could not parse derivation rule in src/extension.ts at line ${index + 1}.`);
   }
-  rules.push({ label, returnType, signature });
+  let operandScopes;
+  if (line.includes('operandScopes:')) {
+    const rawScopes = line.match(/\boperandScopes:\s*(\[[^\]]*\])/);
+    if (!rawScopes) {
+      throw new Error(`Could not parse operand scopes in src/extension.ts at line ${index + 1}.`);
+    }
+    operandScopes = JSON.parse(rawScopes[1]);
+    if (!Array.isArray(operandScopes) || !operandScopes.every(scope => ['current', 'secondary', 'unknown'].includes(scope))) {
+      throw new Error(`Invalid operand scopes in src/extension.ts at line ${index + 1}.`);
+    }
+  }
+  rules.push({ label, returnType, signature, operandScopes });
 }
 
 if (rules.length === 0) {
   throw new Error('No derivation rules were found in src/extension.ts.');
 }
 
-const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP } = buildTypeMaps(rules);
+const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP, paramScopeMap: PARAM_SCOPE_MAP } = buildTypeMaps(rules);
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 const args        = process.argv.slice(2);
@@ -127,7 +138,7 @@ for (const file of files) {
     continue;
   }
 
-  const allDiags = validate(doc, PARAM_TYPE_MAP, RETURN_TYPE_MAP);
+  const allDiags = validate(doc, PARAM_TYPE_MAP, RETURN_TYPE_MAP, undefined, PARAM_SCOPE_MAP);
   const diags    = errorsOnly ? allDiags.filter(d => d.severity === ERROR) : allDiags;
   if (diags.length === 0) continue;
 

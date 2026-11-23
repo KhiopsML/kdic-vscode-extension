@@ -27,6 +27,8 @@ Append one entry to `DERIVATION_RULES`. **No other changes are needed** — `PAR
 - last param `...` → varargs; extra positions beyond the explicit list are unchecked
 - `Block(Type) argName` → parsed as `Block(Type)` (block arguments are not type-checked like scalar args)
 
+For documented relational operand scopes, add an `operandScopes` array to the rule using JSON-style double-quoted strings. The smoke-test CLI reads this metadata from the same rule entry. Later operands of a relational rule without a known scope are not checked against the current dictionary.
+
 ## Adding a type
 
 1. Add to `NATIVE_TYPES` or `ADVANCED_TYPES` in `extension.ts` (completion + hover).

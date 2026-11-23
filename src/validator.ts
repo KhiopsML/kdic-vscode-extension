@@ -32,6 +32,8 @@ export interface KdicDiagnostic {
 export type ParamTypeMap = Map<string, string[]>;
 /** Maps a derivation rule name to its return type. */
 export type ReturnTypeMap = Map<string, string>;
+export type OperandScope = 'current' | 'secondary' | 'unknown';
+export type ParamScopeMap = Map<string, readonly OperandScope[]>;
 
 // ─────────────────────────── Constants ──────────────────────────────────────
 
@@ -97,20 +99,22 @@ export function extractDictionaryNames(strippedText: string): Set<string> {
 }
 
 /**
- * Builds PARAM_TYPE_MAP and RETURN_TYPE_MAP from derivation rule definitions.
+ * Builds parameter type, return type, and operand scope maps from rule definitions.
  *
  * Each rule must provide `label`, `returnType`, and `signature`.
  * This is called once at startup; the maps are then passed to `validate()`.
  */
 export function buildTypeMaps(
-  rules: ReadonlyArray<{ label: string; returnType: string; signature: string }>,
-): { paramTypeMap: ParamTypeMap; returnTypeMap: ReturnTypeMap } {
+  rules: ReadonlyArray<{ label: string; returnType: string; signature: string; operandScopes?: readonly OperandScope[] }>,
+): { paramTypeMap: ParamTypeMap; returnTypeMap: ReturnTypeMap; paramScopeMap: ParamScopeMap } {
   const typeAlt = KDIC_TYPES.join('|');
   const typeRe = new RegExp('^(?:Block\\((' + typeAlt + ')\\)|(' + typeAlt + '))\\s+');
   const paramTypeMap: ParamTypeMap = new Map();
   const returnTypeMap: ReturnTypeMap = new Map();
+  const paramScopeMap: ParamScopeMap = new Map();
   for (const fn of rules) {
     returnTypeMap.set(fn.label, fn.returnType);
+    if (fn.operandScopes) { paramScopeMap.set(fn.label, fn.operandScopes); }
     const inner = fn.signature.match(/\((.+)\)/)?.[1] ?? '';
     const types = inner.split(',').map(part => {
       part = part.trim();
@@ -122,7 +126,7 @@ export function buildTypeMaps(
     });
     paramTypeMap.set(fn.label, types);
   }
-  return { paramTypeMap, returnTypeMap };
+  return { paramTypeMap, returnTypeMap, paramScopeMap };
 }
 
 function findUnquotedChar(text: string, target: string): number {
@@ -156,12 +160,14 @@ function findUnquotedChar(text: string, target: string): number {
  * @param document  — anything that satisfies the KdicDocument interface
  * @param paramTypeMap  — built by `buildTypeMaps()`
  * @param returnTypeMap — built by `buildTypeMaps()`
+ * @param paramScopeMap — optional operand scopes built by `buildTypeMaps()`
  */
 export function validate(
   document: KdicDocument,
   paramTypeMap: ParamTypeMap,
   returnTypeMap: ReturnTypeMap,
   cursorLine?: number,
+  paramScopeMap?: ParamScopeMap,
 ): KdicDiagnostic[] {
   const diags: KdicDiagnostic[] = [];
 
@@ -375,11 +381,8 @@ export function validate(
       const args = cm[2].split(',').map(a => a.trim()).filter(a => a.length > 0);
       const hasVararg = paramTypes[paramTypes.length - 1] === '...';
       const baseTypes = hasVararg ? paramTypes.slice(0, -1) : paramTypes;
-      // When the first parameter expects Table/Entity (directly or via
-      // Block(Table)), subsequent arguments reference variables from the
-      // secondary table — not from this block.
       const firstType = baseTypes.length > 0 ? baseTypes[0] : '';
-      const isCrossTableFn = firstType === 'Table' || firstType === 'Entity'
+      const isRelationalFn = firstType === 'Table' || firstType === 'Entity'
         || firstType === 'Block(Table)' || firstType === 'Block(Entity)';
 
       let searchFrom = cm[0].indexOf('(') + 1;
@@ -394,11 +397,11 @@ export function validate(
           ai < baseTypes.length ? baseTypes[ai]
           : 'any';
         if (expected === 'any' || expected === '...' || expected.startsWith('Block(')) { continue; }
+        const scope = paramScopeMap?.get(fnName)?.[ai] ?? (isRelationalFn && ai > 0 ? 'unknown' : 'current');
+        if (scope !== 'current') { continue; }
 
         const actual = vars.get(arg);
         if (actual === undefined) {
-          // Skip cross-table arguments (positions after a Table/Entity first param)
-          if (isCrossTableFn && ai > 0) { continue; }
           // Variable not declared in this block — warn (likely a typo)
           const argDocOffset = blockStart + cm.index + (posInCall !== -1 ? posInCall : cm[0].indexOf('(') + 1);
           const pos = document.positionAt(argDocOffset);

@@ -24,8 +24,8 @@ Exports all validation logic with no VS Code dependency, so it can be used by bo
 | `KDIC_TYPES` | Ordered type list for regex alternation |
 | `stripLineComments(text)` | Quote/backtick-aware comment stripper (preserves offsets) |
 | `extractDictionaryNames(strippedText)` | Returns `Set<string>` of dictionary names |
-| `buildTypeMaps(rules)` | Builds `PARAM_TYPE_MAP` and `RETURN_TYPE_MAP` from derivation rules |
-| `validate(doc, paramTypeMap, returnTypeMap)` | Full validation — returns `KdicDiagnostic[]` |
+| `buildTypeMaps(rules)` | Builds parameter-type, return-type, and operand-scope maps from derivation rules |
+| `validate(doc, paramTypeMap, returnTypeMap, cursorLine?, paramScopeMap?)` | Full validation — returns `KdicDiagnostic[]` |
 
 ### `src/extension.ts` — VS Code integration
 
@@ -34,7 +34,7 @@ Exports all validation logic with no VS Code dependency, so it can be used by bo
 | `KEYWORDS` | Completion + hover for `Dictionary`, `Root`, `Unused` |
 | `NATIVE_TYPES`, `ADVANCED_TYPES` | Type completions |
 | `DERIVATION_RULES` | ~300 built-in functions — `signature` drives param-type map, `returnType` drives return-type map |
-| `PARAM_TYPE_MAP` / `RETURN_TYPE_MAP` | Auto-derived from `DERIVATION_RULES` via `buildTypeMaps()` — **never edit manually** |
+| `PARAM_TYPE_MAP` / `RETURN_TYPE_MAP` / `PARAM_SCOPE_MAP` | Auto-derived from `DERIVATION_RULES` via `buildTypeMaps()` — **never edit manually** |
 
 `validateDocument()` is a thin wrapper: calls `validate()` from `validator.ts` and converts
 `KdicDiagnostic[]` to `vscode.Diagnostic[]` (`source: 'kdic'`).
@@ -99,7 +99,8 @@ Automated validator tests: `npm test`.
 ## Key conventions
 
 - Adding a derivation rule: **append to `DERIVATION_RULES`** in `extension.ts` only — maps
-  rebuild automatically via `buildTypeMaps()`.
+  rebuild automatically via `buildTypeMaps()`. Record documented relational operand scopes in
+  `operandScopes` using JSON-style double-quoted strings for the smoke-test CLI.
 - Adding a type: add to `NATIVE_TYPES` / `ADVANCED_TYPES` in `extension.ts` **and** insert at
   the correct position in `KDIC_TYPES` in `validator.ts`.
 - Adding or changing validation logic: edit `src/validator.ts` — both the extension and the

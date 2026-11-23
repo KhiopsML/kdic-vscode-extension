@@ -57,7 +57,7 @@ Real-time diagnostics for simple derivation rule calls (non-nested arguments onl
 - **Derived key field**: fields listed in a dictionary's key must not be derived from a rule.
 - **Name length**: dictionary and variable names are limited to 128 characters.
 
-Cross-dictionary variable references (multi-table secondary scope) are silently ignored.
+Argument checks use the current dictionary only when the operand's scope is known to be current. Secondary-scope operands and relational operands with unknown scope are not type-checked by the built-in validator; native Khiops validation remains authoritative.
 
 ### Grammar Validation
 

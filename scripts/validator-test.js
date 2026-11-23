@@ -33,14 +33,17 @@ function createDocument(text) {
 }
 
 const { validate, buildTypeMaps, stripLineComments, extractDictionaryNames } = validator;
-const { paramTypeMap, returnTypeMap } = buildTypeMaps([
+const { paramTypeMap, returnTypeMap, paramScopeMap } = buildTypeMaps([
   { label: 'Concat', returnType: 'Categorical', signature: 'Concat(Categorical value1, ...)' },
   { label: 'Replace', returnType: 'Categorical', signature: 'Replace(Categorical value, Numerical start, Categorical search, Categorical replacement)' },
   { label: 'TableCount', returnType: 'Numerical', signature: 'TableCount(Table table)' },
+  { label: 'TableMean', returnType: 'Numerical', signature: 'TableMean(Table table, Numerical value)', operandScopes: ['current', 'secondary'] },
+  { label: 'TableDifference', returnType: 'Table', signature: 'TableDifference(Table table1, Table table2)', operandScopes: ['current', 'current'] },
+  { label: 'TableAt', returnType: 'Entity', signature: 'TableAt(Table table, Numerical rank)' },
 ]);
 
 function diagnosticsFor(text) {
-  return validate(createDocument(text), paramTypeMap, returnTypeMap);
+  return validate(createDocument(text), paramTypeMap, returnTypeMap, undefined, paramScopeMap);
 }
 
 function assertNoDiagnostics(name, text) {
@@ -207,6 +210,37 @@ Dictionary Events
 };`);
 }
 
+function testDerivationArgumentScopes() {
+  const document = body => `Dictionary Client
+{
+    Table(Achat) achats;
+    ${body}
+};
+Dictionary Achat
+{
+    Numerical montant;
+};`;
+  const hasDiagnostic = (text, message, severity) => {
+    const diagnostics = diagnosticsFor(document(text));
+    assert.ok(diagnostics.some(d => d.severity === severity && d.message.includes(message)),
+      `Expected ${severity}: ${message}\n${JSON.stringify(diagnostics, null, 2)}`);
+  };
+  const noArgumentDiagnostic = (text, name) => {
+    const diagnostics = diagnosticsFor(document(text));
+    assert.ok(!diagnostics.some(d => d.message.startsWith(`'${name}' `)),
+      `Unexpected diagnostic for ${name}\n${JSON.stringify(diagnostics, null, 2)}`);
+  };
+
+  noArgumentDiagnostic('Categorical montant;\n    Numerical moyenne = TableMean(achats, montant);', 'montant');
+  noArgumentDiagnostic('Numerical moyenne = TableMean(achats, montant);', 'montant');
+  hasDiagnostic('Categorical second;\n    Table(Achat) diff = TableDifference(achats, second);', "'second' is 'Categorical' but 'TableDifference' expects 'Table'", 0);
+  hasDiagnostic('Table(Achat) diff = TableDifference(achats, absent);', "'absent' is not declared", 1);
+  hasDiagnostic('Categorical mauvais;\n    Numerical n = TableCount(mauvais);', "'mauvais' is 'Categorical' but 'TableCount' expects 'Table'", 0);
+  hasDiagnostic('Numerical n;\n    Categorical result = Replace(n, 1, "x", "y");', "'n' is 'Numerical' but 'Replace' expects 'Categorical'", 0);
+  noArgumentDiagnostic('Categorical rank;\n    Entity(Achat) result = TableAt(achats, rank);', 'rank');
+  noArgumentDiagnostic('Entity(Achat) result = TableAt(achats, absent);', 'absent');
+}
+
 function run() {
   testCommentHelpers();
   testQuotedStringsAndIdentifiers();
@@ -216,6 +250,7 @@ function run() {
   testStructuralBoundaries();
   testVariableBlocks();
   testMultilineDerivation();
+  testDerivationArgumentScopes();
   console.log('validator tests passed');
 }
 

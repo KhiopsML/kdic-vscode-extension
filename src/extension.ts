@@ -49,6 +49,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { analyzeCompletionPrefix } from './completion-context';
+import { KdicDocumentMirror } from './kdic-document-mirror';
+import { KdicEditorDocuments } from './kdic-editor-documents';
 import {
   KDIC_TYPES, Severity,
   type KdicDiagnostic, type KdicDocument, type OperandScope,
@@ -558,13 +560,17 @@ const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP, paramScope
  * Delegates to the shared `validate()` function in validator.ts and converts
  * the plain KdicDiagnostic results to vscode.Diagnostic objects.
  */
-function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection): void {
+function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection, mirror: KdicDocumentMirror): void {
   const editor = vscode.window.activeTextEditor;
-  const cursorLine = editor && editor.document === document ? editor.selection.active.line : undefined;
-  const plainDiags = validate(document, PARAM_TYPE_MAP, RETURN_TYPE_MAP, cursorLine, PARAM_SCOPE_MAP);
+  const cursorLine = editor && editor.document === document
+    ? mirror.positionAt(mirror.sourceOffsetAt(document.offsetAt(editor.selection.active))).line : undefined;
+  const plainDiags = validate(mirror, PARAM_TYPE_MAP, RETURN_TYPE_MAP, cursorLine, PARAM_SCOPE_MAP);
   const diags = plainDiags.map((d: KdicDiagnostic) => {
     const diag = new vscode.Diagnostic(
-      new vscode.Range(new vscode.Position(d.line, d.col), new vscode.Position(d.line, d.endCol)),
+      new vscode.Range(
+        document.positionAt(mirror.modelOffsetAt(mirror.offsetAt(d.line, d.col))),
+        document.positionAt(mirror.modelOffsetAt(mirror.offsetAt(d.line, d.endCol))),
+      ),
       d.message,
       d.severity === Severity.Error ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning,
     );
@@ -576,14 +582,17 @@ function validateDocument(document: vscode.TextDocument, collection: vscode.Diag
 
 // ─────────────────────── Khiops native validation ───────────────────────────
 
+/** Returns whether native Khiops debug traces are enabled. */
 function isDebugTracesEnabled(): boolean {
   return vscode.workspace.getConfiguration('kdic').get<boolean>('enableDebugTraces', false);
 }
 
+/** Returns whether native Khiops validation runs on automatic saves. */
 function isKhiopsAutoSaveEnabled(): boolean {
   return vscode.workspace.getConfiguration('kdic').get<boolean>('runKhiopsOnAutoSave', true);
 }
 
+/** Writes a native Khiops trace only when debug tracing is enabled. */
 function logKhiopsTrace(outputChannel: vscode.OutputChannel, message: string): void {
   if (isDebugTracesEnabled()) {
     outputChannel.appendLine(message);
@@ -813,10 +822,12 @@ function runKhiopsValidation(
 }
 
 // ─────────────────────────── Extension activation ───────────────────────────
+/** Registers KDIC language providers, diagnostics and document lifecycle listeners. */
 export function activate(context: vscode.ExtensionContext): void {
   const provider = vscode.languages.registerCompletionItemProvider(
     { language: 'kdic' },
     {
+      /** Returns context-sensitive dictionary names, keywords, types and derivation rules. */
       provideCompletionItems(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -916,6 +927,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const hoverProvider = vscode.languages.registerHoverProvider(
     { language: 'kdic' },
     {
+      /** Returns documentation for a known KDIC keyword, type or derivation rule. */
       provideHover(document: vscode.TextDocument, position: vscode.Position): vscode.Hover | undefined {
         const range = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
         if (!range) { return undefined; }
@@ -964,6 +976,7 @@ export function activate(context: vscode.ExtensionContext): void {
     diagnosticSource: 'both',
   };
 
+  /** Recomputes active diagnostic sources and resolves the configured Khiops binary. */
   const refreshRuntimeState = (): void => {
     const config = vscode.workspace.getConfiguration('kdic');
     const khiopsEnabled = config.get<boolean>('enableKhiopsValidation', true);
@@ -995,15 +1008,32 @@ export function activate(context: vscode.ExtensionContext): void {
   // Always register listeners and branch on live runtime state.
   const validateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const saveReasons = new Map<string, vscode.TextDocumentSaveReason>();
+  const sourceDocuments = new KdicEditorDocuments(doc => {
+    if (!runtimeState.useExtension || doc.isClosed) { return; }
+    const mirror = sourceDocuments.get(doc);
+    if (mirror) { validateDocument(doc, diagnostics, mirror); }
+    else { diagnostics.delete(doc.uri); }
+  });
+  context.subscriptions.push(sourceDocuments);
 
+  /** Validates a document when its source mirror is ready, otherwise clears stale diagnostics. */
+  const requestValidation = (doc: vscode.TextDocument): void => {
+    sourceDocuments.open(doc);
+    const mirror = sourceDocuments.get(doc);
+    if (mirror) { validateDocument(doc, diagnostics, mirror); }
+    else { diagnostics.delete(doc.uri); }
+  };
+
+  /** Updates open KDIC documents and clears diagnostics for disabled sources. */
   const revalidateAllOpenKdicDocuments = (): void => {
     for (const doc of vscode.workspace.textDocuments) {
       if (doc.languageId !== 'kdic') { continue; }
 
       if (runtimeState.useExtension) {
-        validateDocument(doc, diagnostics);
+        requestValidation(doc);
       } else {
         diagnostics.delete(doc.uri);
+        sourceDocuments.close(doc);
       }
 
       if (!runtimeState.useKhiops) {
@@ -1024,7 +1054,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (doc.languageId !== 'kdic') { return; }
 
       if (runtimeState.useExtension) {
-        validateDocument(doc, diagnostics);
+        requestValidation(doc);
       } else {
         diagnostics.delete(doc.uri);
       }
@@ -1037,6 +1067,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.document.languageId !== 'kdic') { return; }
 
       const docKey = e.document.uri.toString();
+      if (runtimeState.useExtension) { sourceDocuments.change(e); }
       const pendingTimer = validateTimers.get(docKey);
       if (pendingTimer !== undefined) {
         clearTimeout(pendingTimer);
@@ -1046,7 +1077,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const timer = setTimeout(() => {
           validateTimers.delete(docKey);
           if (runtimeState.useExtension) {
-            validateDocument(e.document, diagnostics);
+            requestValidation(e.document);
           } else {
             diagnostics.delete(e.document.uri);
           }
@@ -1064,6 +1095,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (doc.languageId !== 'kdic') { return; }
 
       const docKey = doc.uri.toString();
+      if (runtimeState.useExtension) {
+        diagnostics.delete(doc.uri);
+        sourceDocuments.refresh(doc);
+      }
       const saveReason = saveReasons.get(docKey);
       saveReasons.delete(docKey);
 
@@ -1092,6 +1127,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       diagnostics.delete(doc.uri);
       khiopsDiags.delete(doc.uri);
+      sourceDocuments.close(doc);
     }),
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('kdic.enableDebugTraces') && isDebugTracesEnabled()) {
@@ -1111,6 +1147,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
+/** Completes extension shutdown; registered subscriptions are disposed by VS Code. */
 export function deactivate(): void {
   // Nothing to clean up
 }

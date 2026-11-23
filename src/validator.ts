@@ -5,14 +5,18 @@
  * used by both `extension.ts` (inside VS Code) and `scripts/smoke-test.js`
  * (standalone Node.js CLI).
  */
+import { tokenizeKdic, type KdicToken } from './kdic-lexer';
 
 // ─────────────────────────── Public interfaces ──────────────────────────────
 
 /** Minimal document interface — satisfied by both vscode.TextDocument and the smoke-test mock. */
 export interface KdicDocument {
+  /** Returns the complete source text. */
   getText(): string;
   lineCount: number;
+  /** Returns the text of a zero-based line without its line terminator. */
   lineAt(line: number): { text: string };
+  /** Converts a source offset to a zero-based line and character position. */
   positionAt(offset: number): { line: number; character: number };
 }
 
@@ -129,6 +133,7 @@ export function buildTypeMaps(
   return { paramTypeMap, returnTypeMap, paramScopeMap };
 }
 
+/** Finds the first target outside strings and quoted identifiers, or -1 if absent. */
 function findUnquotedChar(text: string, target: string): number {
   let inBt = false;
   let inDq = false;
@@ -160,6 +165,7 @@ function findUnquotedChar(text: string, target: string): number {
  * @param document  — anything that satisfies the KdicDocument interface
  * @param paramTypeMap  — built by `buildTypeMaps()`
  * @param returnTypeMap — built by `buildTypeMaps()`
+ * @param cursorLine — optional source line currently being edited
  * @param paramScopeMap — optional operand scopes built by `buildTypeMaps()`
  */
 export function validate(
@@ -170,6 +176,226 @@ export function validate(
   paramScopeMap?: ParamScopeMap,
 ): KdicDiagnostic[] {
   const diags: KdicDiagnostic[] = [];
+
+  const tokens = tokenizeKdic(document.getText());
+  const delimiterStack: KdicToken[] = [];
+  const pairs: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+  /** Adds an error at the position of a delimiter token. */
+  const reportDelimiter = (token: KdicToken, message: string): void => {
+    const pos = document.positionAt(token.start);
+    diags.push({ line: pos.line, col: pos.character, endCol: pos.character + 1, severity: Severity.Error, message });
+  };
+  for (const token of tokens) {
+    if (token.kind !== 'symbol') { continue; }
+    if (token.text === '(' || token.text === '[' || token.text === '{') {
+      delimiterStack.push(token);
+    } else if (pairs[token.text]) {
+      while (delimiterStack.length > 0 && delimiterStack[delimiterStack.length - 1].text !== pairs[token.text]) {
+        const unclosed = delimiterStack.pop()!;
+        reportDelimiter(unclosed, `Unclosed '${unclosed.text}' before '${token.text}'.`);
+      }
+      if (delimiterStack.length === 0) {
+        reportDelimiter(token, token.text === '}' ? "Unmatched '}' outside a dictionary or variable block." : `Unmatched '${token.text}'.`);
+      } else {
+        delimiterStack.pop();
+      }
+    }
+  }
+  for (const token of delimiterStack) {
+    reportDelimiter(token, token.text === '{' ? "Unclosed '{' in dictionary or variable block." : `Unclosed '${token.text}'.`);
+  }
+
+  const significantTokens = tokens.filter(token => token.kind !== 'comment');
+  const metadataIndices = new Set<number>();
+  const metadataRanges: Array<{ start: number; end: number }> = [];
+  const metadataLines = new Set<number>();
+  for (let index = 0; index < significantTokens.length; index++) {
+    const token = significantTokens[index];
+    if (token.kind !== 'symbol') { continue; }
+    if (token.text === '>') {
+      reportDelimiter(token, "Unmatched '>' in metadata.");
+      continue;
+    }
+    if (token.text !== '<') { continue; }
+
+    let end = index + 1;
+    while (end < significantTokens.length) {
+      const current = significantTokens[end];
+      if (current.kind === 'symbol' && ['>', '<', ';', '{', '}'].includes(current.text)) { break; }
+      if (current.closed === false) { end++; break; }
+      end++;
+    }
+    const closing = significantTokens[end]?.text === '>';
+    const content = significantTokens.slice(index + 1, end);
+    const validKey = content[0]?.kind === 'identifier';
+    const validValue = content.length === 1 || (
+      content.length === 3 && content[1].text === '='
+      && (content[2].kind === 'number' || (content[2].kind === 'string' && content[2].closed))
+    );
+    if (!closing || !validKey || !validValue) {
+      reportDelimiter(token, 'Invalid or unclosed metadata.');
+    }
+    const last = closing ? end : end - 1;
+    const endOffset = significantTokens[Math.max(index, last)].end;
+    metadataRanges.push({ start: token.start, end: endOffset });
+    const startLine = document.positionAt(token.start).line;
+    const endLine = document.positionAt(endOffset).line;
+    for (let line = startLine; line <= endLine; line++) { metadataLines.add(line); }
+    for (let cursor = index; cursor <= last; cursor++) { metadataIndices.add(cursor); }
+    index = last;
+  }
+  let braceDepth = 0;
+  let groupDepth = 0;
+  let blockClosing = false;
+  type Declaration = {
+    start: KdicToken; nameIndex: number; type: KdicToken; name: KdicToken; derived: boolean;
+    equalsIndex?: number; endIndex?: number;
+  };
+  let pendingDeclaration: Declaration | undefined;
+  const declarations: Declaration[] = [];
+  const declarationLines = new Set<number>();
+  const dictionaryTerminatorLines = new Set<number>();
+  const headerLines = new Set<number>();
+  /** Finds the token index following a declaration's type, or -1 if no type is present. */
+  const declarationNameIndex = (index: number): number => {
+    let offset = index;
+    if (significantTokens[offset]?.text === 'Unused') { offset++; }
+    if (!KDIC_TYPES.some(type => type === significantTokens[offset]?.text)) { return -1; }
+    offset++;
+    if (significantTokens[offset]?.text === '(') {
+      let depth = 1;
+      offset++;
+      while (offset < significantTokens.length && depth > 0) {
+        if (significantTokens[offset].text === '(') { depth++; }
+        else if (significantTokens[offset].text === ')') { depth--; }
+        offset++;
+      }
+    }
+    return offset;
+  };
+  /** Finalizes a pending declaration and reports a missing semicolon when appropriate. */
+  const reportMissingDeclarationTerminator = (endIndex: number): void => {
+    if (!pendingDeclaration) { return; }
+    pendingDeclaration.endIndex = endIndex;
+    const pos = document.positionAt(pendingDeclaration.start.start);
+    if (pos.line < document.lineCount - 1 && pos.line !== cursorLine) {
+      diags.push({
+        line: pos.line, col: pos.character, endCol: document.lineAt(pos.line).text.trimEnd().length,
+        severity: Severity.Error, message: "Missing ';' at end of variable declaration.",
+      });
+    }
+    pendingDeclaration = undefined;
+  };
+  for (let index = 0; index < significantTokens.length; index++) {
+    const token = significantTokens[index];
+    if (metadataIndices.has(index)) { continue; }
+    if (token.kind === 'symbol' && (token.text === '(' || token.text === '[')) { groupDepth++; continue; }
+    if (token.kind === 'symbol' && (token.text === ')' || token.text === ']')) { groupDepth = Math.max(0, groupDepth - 1); continue; }
+    if (token.kind === 'symbol' && token.text === '{') {
+      braceDepth++;
+      groupDepth = 0;
+      continue;
+    }
+    if (token.kind === 'symbol' && token.text === '}') {
+      if (pendingDeclaration) { reportMissingDeclarationTerminator(index); }
+      if (braceDepth === 1) {
+        const next = significantTokens[index + 1];
+        if (next?.text !== ';') {
+          reportDelimiter(token, "Missing ';' after closing brace of dictionary.");
+        } else {
+          dictionaryTerminatorLines.add(document.positionAt(next.start).line);
+        }
+      }
+      blockClosing = braceDepth > 1;
+      braceDepth = Math.max(0, braceDepth - 1);
+      groupDepth = 0;
+      continue;
+    }
+    if (groupDepth > 0 || braceDepth === 0) { continue; }
+    if (pendingDeclaration && token.kind === 'symbol' && token.text === '=') {
+      pendingDeclaration.derived = true;
+      pendingDeclaration.equalsIndex = index;
+    }
+    if (token.kind === 'symbol' && token.text === ';') {
+      if (pendingDeclaration) {
+        pendingDeclaration.endIndex = index;
+        const startLine = document.positionAt(pendingDeclaration.start.start).line;
+        const endLine = document.positionAt(token.start).line;
+        for (let line = startLine; line <= endLine; line++) { declarationLines.add(line); }
+      }
+      pendingDeclaration = undefined;
+      blockClosing = false;
+      continue;
+    }
+    if (blockClosing) { continue; }
+    const nameIndex = declarationNameIndex(index);
+    if (nameIndex < 0) { continue; }
+    if (pendingDeclaration && index <= pendingDeclaration.nameIndex) { continue; }
+    const previous = significantTokens[index - 1];
+    if (previous?.text === '=' || previous?.text === 'Unused') { continue; }
+    if (!pendingDeclaration && previous
+      && (previous.kind === 'identifier' || previous.kind === 'quotedIdentifier')
+      && document.positionAt(previous.start).line === document.positionAt(token.start).line) { continue; }
+    const candidate = significantTokens[nameIndex];
+    if (!candidate || !['identifier', 'quotedIdentifier'].includes(candidate.kind)) {
+      const position = document.positionAt(candidate?.start ?? token.end);
+      diags.push({
+        line: position.line, col: position.character, endCol: position.character + (candidate?.text.length ?? 1),
+        severity: Severity.Error, message: 'Invalid variable name.',
+      });
+      continue;
+    }
+    if (pendingDeclaration) {
+      reportMissingDeclarationTerminator(index);
+    }
+    const type = significantTokens[index + (token.text === 'Unused' ? 1 : 0)];
+    const name = significantTokens[nameIndex];
+    pendingDeclaration = { start: token, nameIndex, type, name, derived: false };
+    declarations.push(pendingDeclaration);
+    const next = significantTokens[nameIndex + 1];
+    const decodedName = name.kind === 'quotedIdentifier' && name.closed
+      ? name.text.slice(1, -1).replace(/``/g, '`') : name.text;
+    const invalidNextSymbol = next && next.start === name.end && next.kind === 'symbol'
+      && ![';', '=', '[', '}'].includes(next.text);
+    const invalidNextNumber = next && next.start === name.end && (next.kind === 'number' || next.kind === 'missing');
+    const invalidNextName = next && (next.kind === 'identifier' || next.kind === 'quotedIdentifier')
+      && next.text !== 'Unused' && !KDIC_TYPES.some(value => value === next.text);
+    if (name.closed === false || decodedName.length === 0 || decodedName.trim() !== decodedName
+      || invalidNextSymbol || invalidNextNumber || invalidNextName) {
+      const pos = document.positionAt(name.start);
+      diags.push({
+        line: pos.line, col: pos.character, endCol: pos.character + name.text.length,
+        severity: Severity.Error, message: 'Invalid variable name.',
+      });
+    }
+  }
+  reportMissingDeclarationTerminator(significantTokens.length);
+
+  for (const declaration of declarations) {
+    if (declaration.equalsIndex === undefined || declaration.endIndex === undefined) { continue; }
+    for (let index = declaration.equalsIndex + 1; index < declaration.endIndex; index++) {
+      if (metadataIndices.has(index)) { continue; }
+      const token = significantTokens[index];
+      let message: string | undefined;
+      if (token.kind === 'string' && token.closed === false) {
+        message = 'Unclosed categorical constant.';
+      } else if (token.kind === 'number' || token.kind === 'missing') {
+        const previous = significantTokens[index - 1];
+        const next = significantTokens[index + 1];
+        if ((previous?.kind === 'symbol' && (previous.text === '+' || previous.text === '-'))
+          || (next && index + 1 < declaration.endIndex && ![',', ')', ']', ':'].includes(next.text))) {
+          message = 'Invalid numerical constant.';
+        }
+      }
+      if (message) {
+        const pos = document.positionAt(token.start);
+        diags.push({
+          line: pos.line, col: pos.character, endCol: pos.character + token.text.length,
+          severity: Severity.Error, message,
+        });
+      }
+    }
+  }
 
   // Strip line comments while preserving character offsets
   const text = stripLineComments(document.getText());
@@ -188,6 +414,8 @@ export function validate(
 
   // ── Block-level pass ──────────────────────────────────────────────────────
   let i = 0;
+  let headerCursor = 0;
+  let declarationCursor = 0;
   while (i < text.length) {
     // Find opening brace, skipping quoted strings
     let braceOpen = -1;
@@ -233,24 +461,12 @@ export function validate(
     const blockStart = braceOpen + 1;
     let blockEnd = j - 1;
     if (depth > 0) {
-      const pos = document.positionAt(braceOpen);
-      diags.push({
-        line: pos.line, col: pos.character, endCol: pos.character + 1,
-        severity: Severity.Error,
-        message: "Unclosed '{' in dictionary or variable block.",
-      });
       blockEnd = text.length;
     }
     const blockText = text.slice(blockStart, blockEnd);
 
     // Collect variable types declared in this dictionary block
     const vars = new Map<string, string>();
-    const varDeclInfo = new Map<string, {
-      type: string;
-      index: number;
-      typeOffset: number;
-      derived: boolean;
-    }>();
     const relationRefs: Array<{ rawName: string; offset: number }> = [];
     varDeclRe.lastIndex = 0;
     let vm: RegExpExecArray | null;
@@ -258,13 +474,6 @@ export function validate(
       const raw = vm[2];
       const name = raw.startsWith('`') ? raw.slice(1, -1).replace(/``/g, '`') : raw;
       vars.set(name, vm[1]);
-      varDeclInfo.set(name, {
-        type: vm[1],
-        index: vm.index,
-        typeOffset: vm[0].indexOf(vm[1]),
-        derived: findUnquotedChar(vm[0], '=') !== -1,
-      });
-
       const relationMatch = vm[0].match(
         /^(?:Unused\s+)?(?:Table|Entity)\s*\((`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)\)/,
       );
@@ -303,29 +512,74 @@ export function validate(
         });
       }
     }
-    const keyListRe = /\bDictionary\s+(?:`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/;
-    const klMatch = keyListRe.exec(headerText);
-    if (klMatch) {
-      const keyFields = klMatch[1].split(',').map(k => {
-        const t = k.trim();
-        return t.startsWith('`') ? t.slice(1, -1).replace(/``/g, '`') : t;
-      }).filter(k => k.length > 0);
-      for (const keyField of keyFields) {
-        const declaration = varDeclInfo.get(keyField);
-        if (!declaration) { continue; }
-        const pos = document.positionAt(blockStart + declaration.index + declaration.typeOffset);
-        if (declaration.type !== 'Categorical') {
+    while (headerCursor < significantTokens.length && significantTokens[headerCursor].start < i) { headerCursor++; }
+    const headerTokens: KdicToken[] = [];
+    while (headerCursor < significantTokens.length && significantTokens[headerCursor].end <= braceOpen) {
+      if (!metadataIndices.has(headerCursor)) { headerTokens.push(significantTokens[headerCursor]); }
+      headerCursor++;
+    }
+    const dictionaryIndex = headerTokens.findIndex(token => token.text === 'Dictionary');
+    const headerName = headerTokens[dictionaryIndex + 1];
+    const keys: KdicToken[] = [];
+    let headerValid = dictionaryIndex >= 0 && !!headerName
+      && (headerName.kind === 'identifier' || (headerName.kind === 'quotedIdentifier' && headerName.closed === true));
+    let keyIndex = dictionaryIndex + 2;
+    if (headerValid && headerTokens[keyIndex]?.text === '(') {
+      keyIndex++;
+      let expectKey = true;
+      while (keyIndex < headerTokens.length && headerTokens[keyIndex].text !== ')') {
+        const keyToken = headerTokens[keyIndex++];
+        if (expectKey && (keyToken.kind === 'identifier' || (keyToken.kind === 'quotedIdentifier' && keyToken.closed))) {
+          keys.push(keyToken);
+        } else if (expectKey || keyToken.text !== ',') {
+          headerValid = false;
+        }
+        expectKey = !expectKey;
+      }
+      if (expectKey || headerTokens[keyIndex]?.text !== ')') { headerValid = false; }
+      else { keyIndex++; }
+    }
+    if (keyIndex !== headerTokens.length) { headerValid = false; }
+    if (headerValid) {
+      const startLine = document.positionAt(headerTokens[dictionaryIndex].start).line;
+      const bracePosition = document.positionAt(braceOpen);
+      for (let line = startLine; line <= bracePosition.line; line++) {
+        if (line !== bracePosition.line || !document.lineAt(line).text.slice(bracePosition.character + 1).trim()) {
+          headerLines.add(line);
+        }
+      }
+      while (declarationCursor < declarations.length && declarations[declarationCursor].start.start < blockStart) {
+        declarationCursor++;
+      }
+      const blockDeclarations: Declaration[] = [];
+      while (declarationCursor < declarations.length && declarations[declarationCursor].start.start < blockEnd) {
+        blockDeclarations.push(declarations[declarationCursor++]);
+      }
+      for (const key of keys) {
+        const keyField = key.kind === 'quotedIdentifier' ? key.text.slice(1, -1).replace(/``/g, '`') : key.text;
+        const declaration = blockDeclarations.find(item =>
+          (item.name.kind === 'quotedIdentifier' ? item.name.text.slice(1, -1).replace(/``/g, '`') : item.name.text) === keyField);
+        if (!declaration) {
+          const pos = document.positionAt(key.start);
+          diags.push({
+            line: pos.line, col: pos.character, endCol: pos.character + key.text.length,
+            severity: Severity.Error, message: `Key field '${keyField}' is not declared in this dictionary.`,
+          });
+          continue;
+        }
+        const pos = document.positionAt(declaration.type.start);
+        if (declaration.type.text !== 'Categorical') {
           diags.push({
             line: pos.line, col: pos.character,
-            endCol: pos.character + declaration.type.length,
+            endCol: pos.character + declaration.type.text.length,
             severity: Severity.Error,
-            message: `Key field '${keyField}' must be 'Categorical' but is declared as '${declaration.type}'.`,
+            message: `Key field '${keyField}' must be 'Categorical' but is declared as '${declaration.type.text}'.`,
           });
         }
         if (declaration.derived) {
           diags.push({
             line: pos.line, col: pos.character,
-            endCol: pos.character + declaration.type.length,
+            endCol: pos.character + declaration.type.text.length,
             severity: Severity.Error,
             message: `Key field '${keyField}' must not be derived from a rule.`,
           });
@@ -459,10 +713,47 @@ export function validate(
     new RegExp('^(Unused\\s+)?(' + typeAlt + ')(\\([^)]*\\))?\\s+'),
   ];
   const varDeclStartRe = new RegExp('^(Unused\\s+)?(' + typeAlt + ')(\\([^)]*\\))?\\s+');
+  /** Checks whether a line contains a complete dictionary with recognizable declarations. */
+  const isInlineDictionary = (line: string): boolean => {
+    const lineTokens = tokenizeKdic(line).filter(token => token.kind !== 'comment');
+    const open = lineTokens.findIndex(token => token.kind === 'symbol' && token.text === '{');
+    if (open < 0 || !outsidePatterns.some(pattern => pattern.test(line.slice(0, lineTokens[open].end).trim()))) {
+      return false;
+    }
+    let start = lineTokens[open].end;
+    let depth = 0;
+    let metadata = false;
+    for (let index = open + 1; index < lineTokens.length; index++) {
+      const token = lineTokens[index];
+      if (token.kind !== 'symbol') { continue; }
+      if (token.text === '<' && depth === 0) { metadata = true; }
+      else if (token.text === '>' && metadata) { metadata = false; start = token.end; }
+      else if (!metadata && (token.text === '(' || token.text === '[')) { depth++; }
+      else if (!metadata && (token.text === ')' || token.text === ']')) { depth--; }
+      else if (!metadata && depth === 0 && (token.text === ';' || token.text === '}')) {
+        const fragment = line.slice(start, token.end).trim();
+        if (token.text === '}') {
+          if (fragment !== '}' || lineTokens[index + 1]?.text !== ';' || index + 2 !== lineTokens.length) { return false; }
+          return true;
+        }
+        if (!insidePatterns.some(pattern => pattern.test(fragment))) { return false; }
+        start = token.end;
+      }
+    }
+    return false;
+  };
 
   const strippedLines = text.split(/\r?\n/);
+  const maskedText = text.split('');
+  for (const range of metadataRanges) {
+    for (let index = range.start; index < range.end; index++) {
+      if (maskedText[index] !== '\n' && maskedText[index] !== '\r') { maskedText[index] = ' '; }
+    }
+  }
+  const metadataMaskedLines = maskedText.join('').split(/\r?\n/);
   let lineDepth = 0;
   let parenDepth = 0;
+  let bracketDepth = 0;
   let prevLineEndsWithAssign = false;
   let variableBlockOpen = false;
   let variableBlockType: string | undefined;
@@ -476,7 +767,6 @@ export function validate(
     const effective = strippedLine.trim();
 
     const depthBefore = lineDepth;
-    let unmatchedCloseOffset = -1;
     {
       let inBt = false, inDq = false;
       for (let k = 0; k < effective.length; k++) {
@@ -492,20 +782,10 @@ export function validate(
         else if (ch === '"') { inDq = true; }
         else if (ch === '{') { lineDepth++; }
         else if (ch === '}') {
-          if (lineDepth === 0 && unmatchedCloseOffset === -1) { unmatchedCloseOffset = k; }
           lineDepth = Math.max(0, lineDepth - 1);
         }
       }
     }
-    if (unmatchedCloseOffset !== -1) {
-      const indentLen = lineRaw.length - trimmed.length;
-      diags.push({
-        line: li, col: indentLen + unmatchedCloseOffset, endCol: indentLen + unmatchedCloseOffset + 1,
-        severity: Severity.Error,
-        message: "Unmatched '}' outside a dictionary or variable block.",
-      });
-    }
-
     if (depthBefore === 1 && effective === '{') {
       variableBlockOpen = true;
       variableBlockType = undefined;
@@ -552,7 +832,7 @@ export function validate(
         });
       }
     }
-    if (lineDepth === 0) { parenDepth = 0; prevLineEndsWithAssign = false; }
+    if (lineDepth === 0) { parenDepth = 0; bracketDepth = 0; prevLineEndsWithAssign = false; }
 
     // Check 1: non-comment content after ';'
     const semiIdx = (() => {
@@ -574,7 +854,7 @@ export function validate(
       return last;
     })();
     if (semiIdx !== -1) {
-      const afterSemi = strippedLine.slice(semiIdx + 1);
+      const afterSemi = (metadataMaskedLines[li] ?? '').slice(semiIdx + 1);
       const metaOne = /<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"[^"]*(?:""[^"]*)*"|[^"<>\s]*))?>/g;
       let mEnd = 0;
       {
@@ -605,9 +885,14 @@ export function validate(
     }
 
     // Check 2: line matches a known kdic grammar pattern
-    if (effective.length > 0 && parenDepth === 0 && !prevLineEndsWithAssign) {
+    if (effective.length > 0 && parenDepth === 0 && bracketDepth === 0 && !prevLineEndsWithAssign) {
       const patterns = depthBefore > 0 ? insidePatterns : outsidePatterns;
-      if (!patterns.some(p => p.test(effective))) {
+      const metadataMaskedEffective = (metadataMaskedLines[li] ?? '').trim();
+      if (!patterns.some(p => p.test(effective))
+        && !(metadataLines.has(li) && patterns.some(p => p.test(metadataMaskedEffective)))
+        && !declarationLines.has(li) && !headerLines.has(li)
+        && !(effective === ';' && dictionaryTerminatorLines.has(li))
+        && !(depthBefore === 0 && isInlineDictionary(effective))) {
         const indentLen = lineRaw.length - trimmed.length;
         const endCol = strippedLine.trimEnd().length;
         diags.push({
@@ -620,7 +905,12 @@ export function validate(
 
     // Compute net parens for this line
     let lineNetParens = 0;
+    let lineNetBrackets = 0;
     if (depthBefore > 0) {
+      for (const token of tokenizeKdic(effective)) {
+        if (token.kind === 'symbol' && token.text === '[') { lineNetBrackets++; }
+        else if (token.kind === 'symbol' && token.text === ']') { lineNetBrackets--; }
+      }
       let inBtP = false, inDqP = false;
       for (let k = 0; k < effective.length; k++) {
         const ch = effective[k];
@@ -639,44 +929,10 @@ export function validate(
       }
     }
 
-    // Check 3: missing ';' at end of a complete variable declaration.
-    // Only fire when the user has already moved to the next line (li is not the
-    // last line), so the error doesn't flash while they are still typing.
-    // Also skip the line the cursor is currently on — the user may still be editing it.
-    if (
-      depthBefore > 0 &&
-      parenDepth === 0 &&
-      !prevLineEndsWithAssign &&
-      effective.length > 0 &&
-      lineNetParens === 0 &&
-      !effective.trimEnd().endsWith('=') &&
-      semiIdx === -1 &&
-      varDeclStartRe.test(effective) &&
-      li < document.lineCount - 1 &&
-      li !== cursorLine
-    ) {
-      const indentLen = lineRaw.length - trimmed.length;
-      const endCol = strippedLine.trimEnd().length;
-      diags.push({
-        line: li, col: indentLen, endCol,
-        severity: Severity.Error,
-        message: "Missing ';' at end of variable declaration.",
-      });
-    }
-
     // Update parenDepth
     if (depthBefore > 0) {
       parenDepth = Math.max(0, parenDepth + lineNetParens);
-    }
-
-    // Check 4: missing ';' after the closing brace of a dictionary block
-    if (depthBefore === 1 && lineDepth === 0 && effective === '}') {
-      const col = strippedLine.indexOf('}');
-      diags.push({
-        line: li, col, endCol: col + 1,
-        severity: Severity.Error,
-        message: "Missing ';' after closing brace of dictionary.",
-      });
+      bracketDepth = Math.max(0, bracketDepth + lineNetBrackets);
     }
 
     prevLineEndsWithAssign = depthBefore > 0 && effective.trimEnd().endsWith('=');

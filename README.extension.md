@@ -67,9 +67,11 @@ For large dictionary files, set `kdic.runKhiopsOnAutoSave` to `false` and use sa
 The built-in validator checks common problems while you edit, including:
 
 - Missing or misplaced semicolons
-- Unclosed or unmatched braces
+- Unclosed, unmatched, or incorrectly nested braces, parentheses, and external-key brackets
+- Malformed metadata, variable names, or derivation constants
 - Invalid dictionary headers and variable blocks
 - Key fields that are not `Categorical`
+- Key fields missing from the dictionary
 - Unknown `Table(...)` and `Entity(...)` dictionary references
 - Simple derivation return-type and argument-type mismatches
 - Undeclared derivation arguments
@@ -77,6 +79,8 @@ The built-in validator checks common problems while you edit, including:
 - Dictionary and variable names longer than 128 characters
 
 Built-in validation is intentionally structural and best-effort. Argument checks use the current dictionary only for operands known to have current scope; secondary-scope operands and relational operands with unknown scope are not type-checked. The native Khiops parser remains authoritative for nested derivations, secondary-table scopes, joins, and complex block contents.
+
+VS Code normalizes line endings in the editor. The extension reconciles the original source with unsaved edits to preserve isolated carriage returns inside quoted text. If the source cannot be read or reconciled, it warns and validates the editor text instead. Older VS Code versions may not support decoding every configured encoding. Saving may normalize those characters in the file; diagnostics then reflect the saved content.
 
 ## Example in VS Code
 

@@ -1,0 +1,8 @@
+{
+  "name": "kdic-vscode-test-host",
+  "publisher": "local-test",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.79.0" },
+  "main": "./extension.js",
+  "activationEvents": []
+}

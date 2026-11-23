@@ -1,3 +1,4 @@
+/** Identifies comment and derivation context in a line prefix, ignoring quoted text and metadata assignments. */
 export function analyzeCompletionPrefix(prefix: string): { inComment: boolean; inDerivation: boolean } {
   let quote: '"' | '`' | undefined;
   let metadataEquals = -1;

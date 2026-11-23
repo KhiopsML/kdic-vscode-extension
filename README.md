@@ -55,6 +55,7 @@ Real-time diagnostics for simple derivation rule calls (non-nested arguments onl
 - **Unknown dictionary reference**: `Table(X)` or `Entity(X)` where dictionary `X` is not declared anywhere in the file.
   > `Table(Burbu) vehicles;` → error on `Burbu`
 - **Derived key field**: fields listed in a dictionary's key must not be derived from a rule.
+- **Undeclared key field**: every dictionary key must refer to a declared variable.
 - **Name length**: dictionary and variable names are limited to 128 characters.
 
 Argument checks use the current dictionary only when the operand's scope is known to be current. Secondary-scope operands and relational operands with unknown scope are not type-checked by the built-in validator; native Khiops validation remains authoritative.
@@ -66,11 +67,14 @@ Real-time diagnostics for structural grammar issues:
 - **(Error)** Non-comment, non-metadata content after `;`
 - **(Error)** Missing `;` at the end of a complete variable declaration
 - **(Error)** Missing `;` after the closing `}` of a dictionary block
-- **(Error)** Unclosed or unmatched braces
+- **(Error)** Unclosed, unmatched, or incorrectly nested braces, parentheses, and external-key brackets
+- **(Error)** Malformed metadata, variable names, or derivation constants
 - **(Error)** Invalid variable-block members or closing declarations
 - **(Warning)** Lines that do not match any known kdic grammar pattern — use `//` to mark non-kdic content
 
 Allowed after `;`: metadata annotations `<key>`, `<key=value>`, `<key="value">` and `//` comments.
+
+VS Code normalizes line endings in the editor. The extension reconciles the original source with unsaved edits to preserve isolated carriage returns inside quoted text. If the source cannot be read or reconciled, it warns and validates the editor text instead. Older VS Code versions may not support decoding every configured encoding. Saving may normalize those characters in the file; diagnostics then reflect the saved content.
 
 ### Native Khiops Validation (Optional)
 
@@ -140,6 +144,25 @@ npm run compile
 Then press **F5** in VS Code to open an Extension Development Host with the extension loaded.
 
 If you want native Khiops diagnostics, install the Khiops binary and configure `kdic.khiopsPath`. On Windows, `KHIOPS_HOME` is also checked automatically.
+
+### Tests in a VS Code host
+
+Run `npm test` for the standalone suite. To test the packaged extension in an isolated VS Code profile on macOS:
+
+```bash
+root="$(pwd)"
+test_dir="$(mktemp -d /tmp/kdic-vscode-test.XXXXXX)"
+npm run compile
+./node_modules/.bin/vsce package --readme-path README.extension.md --out "$test_dir/kdic.vsix"
+code --install-extension "$test_dir/kdic.vsix" --user-data-dir "$test_dir/user" --extensions-dir "$test_dir/extensions"
+KDIC_VSCODE_TEST_EXTENSIONS="$test_dir/extensions" "/Applications/Visual Studio Code.app/Contents/MacOS/Code" \
+  --extensionDevelopmentPath="$root/scripts/vscode-host-tests" \
+  --extensionTestsPath="$root/scripts/vscode-host-tests/run.js" \
+  --user-data-dir="$test_dir/user" --extensions-dir="$test_dir/extensions" \
+  --disable-workspace-trust --skip-welcome --skip-release-notes
+```
+
+The temporary profile and packaged extension remain in `test_dir` for inspection.
 
 ### Package as `.vsix`
 

@@ -6,6 +6,8 @@ const assert = require('assert');
 const path = require('path');
 
 const validator = require(path.join(__dirname, '..', 'out', 'validator.js'));
+const { tokenizeKdic } = require(path.join(__dirname, '..', 'out', 'kdic-lexer.js'));
+const { KdicDocumentMirror } = require(path.join(__dirname, '..', 'out', 'kdic-document-mirror.js'));
 
 function createDocument(text) {
   const normalizedText = text.replace(/\r\n/g, '\n');
@@ -71,6 +73,79 @@ function testCommentHelpers() {
   );
 }
 
+function testLexicalTokens() {
+  const source = ' \t`a``//b` "x""//y" -1.3e+7 #Missing // comment\r\n`open\n"open';
+  const tokens = tokenizeKdic(source);
+  assert.deepStrictEqual(tokens.map(token => [token.kind, token.text, token.closed]), [
+    ['quotedIdentifier', '`a``//b`', true],
+    ['string', '"x""//y"', true],
+    ['number', '-1.3e+7', undefined],
+    ['missing', '#Missing', undefined],
+    ['comment', '// comment\r', undefined],
+    ['quotedIdentifier', '`open', false],
+    ['string', '"open', false],
+  ]);
+  for (const token of tokens) {
+    assert.strictEqual(source.slice(token.start, token.end), token.text);
+  }
+  assert.strictEqual(stripLineComments(source).length, source.length);
+  assert.ok(stripLineComments(source).includes('`a``//b` "x""//y"'));
+  assert.deepStrictEqual(tokenizeKdic('#Khiops (header)\n#Missing').map(token => token.kind), ['comment', 'missing']);
+
+  const controlCharacters = '"a\r<//b>" `a\r//b`';
+  assert.deepStrictEqual(tokenizeKdic(controlCharacters).map(token => [token.kind, token.text, token.closed]), [
+    ['string', '"a\r<//b>"', true],
+    ['quotedIdentifier', '`a\r//b`', true],
+  ]);
+  assert.strictEqual(stripLineComments(controlCharacters), controlCharacters);
+  assert.deepStrictEqual(tokenizeKdic('// comment\r )\nDictionary').map(token => token.kind), ['comment', 'identifier']);
+}
+
+function testDocumentMirror() {
+  const source = 'Dictionary Records\r\n{\r\n Categorical value = Copy("a\r<b>");\r\n};\r\n';
+  for (const eol of ['\n', '\r\n']) {
+    const model = source.replace(/\r\n|\r|\n/g, eol);
+    const mirror = KdicDocumentMirror.create(source, model, eol);
+    assert.ok(mirror);
+    assert.deepStrictEqual(validate(mirror, paramTypeMap, returnTypeMap, undefined, paramScopeMap), []);
+    const sourceSuffix = source.indexOf('<b>');
+    const modelSuffix = model.indexOf('<b>');
+    assert.strictEqual(mirror.modelOffsetAt(sourceSuffix), modelSuffix);
+    assert.strictEqual(mirror.sourceOffsetAt(modelSuffix), sourceSuffix);
+    assert.strictEqual(mirror.lineAt(2).text, ' Categorical value = Copy("a\r<b>");');
+
+    const offset = model.indexOf('Records');
+    const edited = model.slice(0, offset) + 'New' + model.slice(offset);
+    const updated = mirror.applyChanges([{ rangeOffset: offset, rangeLength: 0, text: 'New' }], edited, eol);
+    assert.ok(updated);
+    assert.ok(updated.getText().includes('"a\r<b>"'));
+    assert.strictEqual(updated.modelOffsetAt(updated.getText().indexOf('<b>')), edited.indexOf('<b>'));
+    const invalidOffset = edited.indexOf('};');
+    const invalidModel = edited.slice(0, invalidOffset) + `Categorical bad-1;${eol}` + edited.slice(invalidOffset);
+    const invalidMirror = updated.applyChanges(
+      [{ rangeOffset: invalidOffset, rangeLength: 0, text: `Categorical bad-1;${eol}` }],
+      invalidModel, eol,
+    );
+    assert.ok(invalidMirror);
+    const diagnostic = validate(invalidMirror, paramTypeMap, returnTypeMap, undefined, paramScopeMap)
+      .find(d => d.message.includes('Invalid variable name'));
+    assert.ok(diagnostic);
+    assert.strictEqual(invalidMirror.modelOffsetAt(invalidMirror.offsetAt(diagnostic.line, diagnostic.col)), invalidModel.indexOf('bad-1'));
+
+    const start = edited.indexOf('"a');
+    const end = edited.indexOf('");', start);
+    const replaced = edited.slice(0, start) + '"replacement' + edited.slice(end);
+    const removed = updated.applyChanges([{ rangeOffset: start, rangeLength: end - start, text: '"replacement' }], replaced, eol);
+    assert.ok(removed);
+    assert.ok(!removed.getText().includes('a\r<b>'));
+    assert.strictEqual(KdicDocumentMirror.create(source, model + 'x', eol), undefined);
+  }
+  const invalid = 'Dictionary D\n{\n Categorical x = Copy("broken\nvalue");\n};\n';
+  const mirror = KdicDocumentMirror.create(invalid, invalid, '\n');
+  assert.ok(validate(mirror, paramTypeMap, returnTypeMap, undefined, paramScopeMap)
+    .some(d => d.message.includes('Unclosed categorical constant')));
+}
+
 function testQuotedStringsAndIdentifiers() {
   assertNoDiagnostics('quoted strings', `Dictionary Texts
 {
@@ -82,6 +157,9 @@ function testQuotedStringsAndIdentifiers() {
 {
     Categorical \`value//name\`;
 };`);
+
+  assertNoDiagnostics('carriage return inside quoted text', 'Dictionary Names\n{\n Categorical `a\rb`;\n Categorical value = Concat("a\r<//b>");\n};');
+  assertNoDiagnostics('carriage return inside a comment', 'Dictionary Names\n{\n Categorical name; // comment\r )\n};');
 }
 
 function testStringSemicolonInDerivation() {
@@ -134,6 +212,12 @@ function testKeyAndMissingSemicolonDiagnostics() {
 }
 
 function testStructuralBoundaries() {
+  const unknownLine = diagnosticsFor('Dictionary Records\n{\n not a declaration\n};');
+  assert.ok(unknownLine.some(d => d.severity === 1 && d.message.includes('Line does not match kdic grammar')));
+  const legacyLine = diagnosticsFor('Dictionary Records\n{\n Symbol Date;\n};');
+  assert.ok(legacyLine.some(d => d.severity === 1 && d.message.includes('Line does not match kdic grammar')));
+  assert.ok(!legacyLine.some(d => d.message.includes('Invalid variable name')));
+
   assertDiagnostic('unclosed dictionary', `Dictionary Records
 {
     Categorical id;
@@ -154,6 +238,29 @@ function testStructuralBoundaries() {
 (id) {
     Categorical id;
 };`);
+
+  assertNoDiagnostics('balanced multiline nested delimiters', `Dictionary Records
+(id) {
+    Categorical id;
+    Entity(Records) ref [
+      id
+    ];
+    Numerical count = TableCount(
+      Table(Records)
+    ); // ) ] }
+};`);
+
+  for (const [name, text, message, line, col] of [
+    ['unclosed key parenthesis', 'Dictionary D (id\n{\n Categorical id;\n};', "Unclosed '('", 0, 13],
+    ['unmatched call parenthesis', 'Dictionary D\n{\n Numerical x = Copy(1));\n};', "Unmatched ')'", 2, 22],
+    ['unclosed relation bracket', 'Dictionary D\n{\n Entity(D) x [id;\n};', "Unclosed '['", 2, 13],
+    ['unmatched relation bracket', 'Dictionary D\n{\n Entity(D) x id];\n};', "Unmatched ']'", 2, 15],
+    ['mismatched nesting', 'Dictionary D\n{\n Numerical x = F([1)];\n};', "Unclosed '['", 2, 17],
+  ]) {
+    const diagnostics = diagnosticsFor(text);
+    assert.ok(diagnostics.some(d => d.severity === 0 && d.message.includes(message) && d.line === line && d.col === col),
+      `${name}: expected ${message} at ${line}:${col}\n${JSON.stringify(diagnostics, null, 2)}`);
+  }
 }
 
 function testVariableBlocks() {
@@ -210,6 +317,86 @@ Dictionary Events
 };`);
 }
 
+function testDeclarationTerminators() {
+  const missing = `Dictionary Records
+{
+    Numerical result = Sum(
+        1, 2
+    )
+    Categorical name;
+};`;
+  assertDiagnostic('multiline missing semicolon', missing, "Missing ';' at end of variable declaration");
+  assertNoDiagnostics('multiline declaration with semicolon', missing.replace('    )\n', '    );\n'));
+  const cursorDiagnostics = validate(createDocument(missing), paramTypeMap, returnTypeMap, 2, paramScopeMap);
+  assert.ok(!cursorDiagnostics.some(d => d.message.includes("Missing ';' at end of variable declaration")));
+  assertNoDiagnostics('inline declarations', 'Dictionary Records { Categorical id; Numerical value; };');
+  assertNoDiagnostics('inline metadata and declarations', 'Dictionary Records { Categorical id; <Key> Numerical value; };');
+  assertNoDiagnostics('declaration split across lines', 'Dictionary Records\n{\n Numerical\n value\n ;\n};');
+  assertNoDiagnostics('dictionary terminator on next line', 'Dictionary Records\n{\n Categorical id;\n}\n;');
+  assertDiagnostic('inline variable missing semicolon', 'Dictionary Records { Categorical id Numerical value; };\n',
+    "Missing ';' at end of variable declaration");
+  assert.ok(!diagnosticsFor('Dictionary Records\n{\n Categorical id').some(d => d.message.includes("Missing ';'")));
+  assertDiagnostic('inline dictionary missing semicolon', 'Dictionary Records { Categorical id; } // end',
+    "Missing ';' after closing brace");
+}
+
+function testMetadataSyntax() {
+  const document = metadata => `Dictionary Records
+{
+    Categorical id; ${metadata}
+};`;
+  for (const metadata of ['<Flag>', '<Number=-1.3e+7>', '<Label="a > b ""quoted"" // text">']) {
+    assertNoDiagnostics(`valid metadata ${metadata}`, document(metadata));
+  }
+  assertNoDiagnostics('multiline metadata', document('<Number\n =\n 1.5\n>'));
+  assertNoDiagnostics('dictionary metadata', 'Dictionary Records <Number\n = 1.5\n>\n{\n Categorical id;\n};');
+  for (const metadata of ['<Flag', 'Flag>', '<123>', '<Flag=abc>', '<Flag=#Missing>', '<Flag=>', '<Flag="open', '<Flag=1e+>']) {
+    assertDiagnostic(`invalid metadata ${metadata}`, document(metadata), 'metadata');
+  }
+}
+
+function testDictionaryKeysAndNames() {
+  assertNoDiagnostics('quoted multiline key', 'Dictionary Records (\n `a,b`,\n `a``b`\n)\n{\n Categorical `a,b`;\n Categorical `a``b`;\n};');
+  assertNoDiagnostics('quoted parenthesis in key', 'Dictionary Records (`a)b`)\n{\n Categorical `a)b`;\n};');
+  assertDiagnostic('missing key', 'Dictionary Records (missing)\n{\n Categorical id;\n};', "Key field 'missing' is not declared");
+  assertDiagnostic('quoted non-categorical key', 'Dictionary Records (`a,b`)\n{\n Numerical `a,b`;\n};', "Key field 'a,b' must be 'Categorical'");
+  assertDiagnostic('invalid unquoted name', 'Dictionary Records\n{\n Categorical bad-name;\n};', 'Invalid variable name');
+  assertDiagnostic('name starting with a digit', 'Dictionary Records\n{\n Categorical 1bad;\n};', 'Invalid variable name');
+  assertDiagnostic('name ending with numeric punctuation', 'Dictionary Records\n{\n Categorical bad-1;\n};', 'Invalid variable name');
+  assertDiagnostic('numeric variable name', 'Dictionary Records\n{\n Unused Categorical 123;\n};', 'Invalid variable name');
+  assertNoDiagnostics('type or modifier used as a variable name', 'Dictionary Records\n{\n Categorical Unused;\n Numerical Text;\n};');
+  assertDiagnostic('unquoted name with spaces', 'Dictionary Records\n{\n Categorical bad name;\n};', 'Invalid variable name');
+  assertDiagnostic('unclosed quoted name', 'Dictionary Records\n{\n Categorical `bad\n};', 'Invalid variable name');
+  assertDiagnostic('empty quoted name', 'Dictionary Records\n{\n Categorical ``;\n};', 'Invalid variable name');
+  assertDiagnostic('quoted name with leading space', 'Dictionary Records\n{\n Categorical ` bad`;\n};', 'Invalid variable name');
+  assert.ok(!diagnosticsFor('Dictionary Records (id)\n{\n Categorical id\n};')
+    .some(d => d.message.includes("Key field 'id' is not declared")));
+}
+
+function testDerivationConstants() {
+  const document = expr => `Dictionary Records
+{
+    Numerical input;
+    Categorical output = Copy(${expr});
+};`;
+  for (const expression of ['"a""b"', '"a" + "b"', '-1.3e+7', '#Missing', 'input', 'Copy(\n 1.2e-3\n)']) {
+    const diagnostics = diagnosticsFor(document(expression));
+    assert.ok(!diagnostics.some(d => d.message.includes('constant')), `${expression}: ${JSON.stringify(diagnostics)}`);
+  }
+  assertNoDiagnostics('numeric input before output operands', `Dictionary Records
+{
+    Table(Records) output = BuildDummyTable(1, 10 : first, second);
+};`);
+  assertNoDiagnostics('missing input before output operands', `Dictionary Records
+{
+    Table(Records) output = BuildDummyTable(#Missing : first);
+};`);
+  for (const expression of ['1e+', '1.2.3', '#MissingOops', 'Copy(1e-)', '"unterminated']) {
+    assertDiagnostic(`invalid constant ${expression}`, document(expression), 'constant');
+  }
+  assertDiagnostic('malformed numeric input before output operands', 'Dictionary Records\n{\n Table(Records) output = BuildDummyTable(1e+ : first);\n};', 'Invalid numerical constant');
+}
+
 function testDerivationArgumentScopes() {
   const document = body => `Dictionary Client
 {
@@ -243,6 +430,8 @@ Dictionary Achat
 
 function run() {
   testCommentHelpers();
+  testLexicalTokens();
+  testDocumentMirror();
   testQuotedStringsAndIdentifiers();
   testStringSemicolonInDerivation();
   testUnknownDictionaryReference();
@@ -250,6 +439,10 @@ function run() {
   testStructuralBoundaries();
   testVariableBlocks();
   testMultilineDerivation();
+  testDeclarationTerminators();
+  testMetadataSyntax();
+  testDictionaryKeysAndNames();
+  testDerivationConstants();
   testDerivationArgumentScopes();
   console.log('validator tests passed');
 }

@@ -48,6 +48,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { analyzeCompletionPrefix } from './completion-context';
 import {
   KDIC_TYPES, Severity,
   type KdicDiagnostic, type KdicDocument, type OperandScope,
@@ -541,18 +542,6 @@ function isInsideDictionaryBlock(document: vscode.TextDocument, position: vscode
 }
 
 /**
- * Returns true if the current line contains a '=' before the cursor,
- * indicating a derivation rule context.
- */
-function isInDerivationContext(linePrefix: string): boolean {
-  const withoutMeta = linePrefix.replace(
-    /<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"(?:[^"]|"")*"|[^"<>\s]*))?>/g,
-    '',
-  );
-  return withoutMeta.includes('=');
-}
-
-/**
  * Detects if cursor is right after `Entity(` or `Table(`, to offer dict-name completions.
  */
 function isAfterRelationalTypeParens(linePrefix: string): boolean {
@@ -834,9 +823,8 @@ export function activate(context: vscode.ExtensionContext): void {
       ): vscode.CompletionItem[] {
         const linePrefix = document.lineAt(position).text.substring(0, position.character);
 
-        // Skip completions inside comments
-        const commentIdx = linePrefix.indexOf('//');
-        if (commentIdx !== -1 && position.character > commentIdx) {
+        const { inComment, inDerivation } = analyzeCompletionPrefix(linePrefix);
+        if (inComment) {
           return [];
         }
 
@@ -871,8 +859,6 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         // ── Context: inside dictionary block ────────────────────────────────
-        const inDerivation = isInDerivationContext(linePrefix);
-
         if (!inDerivation) {
           // Offer type keywords and Unused modifier
           for (const kw of [KEYWORDS.find(k => k.label === 'Unused')!]) {

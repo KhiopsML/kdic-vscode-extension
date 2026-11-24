@@ -33,6 +33,10 @@ const rules = buildRuleMaps([
   { label: 'Length', returnType: 'Numerical', signature: 'Length(Categorical value)' },
   { label: 'Pick', returnType: 'Numerical|Categorical', signature: 'Pick(Numerical index, Categorical value)' },
   { label: 'Anything', returnType: 'any', signature: 'Anything(Numerical value)' },
+  { label: 'GE', returnType: 'Numerical', signature: 'GE(Numerical value1, Numerical value2)' },
+  { label: 'Select', returnType: 'Table', signature: 'Select(Table table, Numerical criterion)', operandScopes: ['current', 'secondary'] },
+  { label: 'GetValue', returnType: 'Numerical', signature: 'GetValue(Entity entity, Numerical value)', operandScopes: ['current', 'secondary'] },
+  { label: 'TableAtRank', returnType: 'Entity', signature: 'TableAtRank(Table table, Numerical rank)', operandScopes: ['current', 'current'] },
 ]);
 
 function diagnosticsFor(text) {
@@ -501,7 +505,7 @@ function testBackquotedVariableArguments() {
     'Categorical x = Concat(`the text`, "b");',
     'Numerical x = Sum(`a ``quoted`` number`, 1, `a ``quoted`` number`);',
     'Numerical x = Sum(`plain`, plain);',          // backquotes around a plain name denote the same variable
-    'Numerical x = TableMean(rows, `other table`);', // an operand of the secondary table is not checked
+    'Numerical x = TableMean(rows, `a ``quoted`` number`);', // looked up in the dictionary of `rows`, which is this one
   ]) {
     assertNoDiagnostics(declaration, document(declaration));
   }
@@ -541,8 +545,7 @@ function testNestedCalls() {
     'Numerical x = Sum(Length(text), Pick(1, "a"));',           // a result with several possible types
     'Categorical x = Concat(Pick(1, "a"), "b");',
     'Numerical x = Sum(number, Anything(1));',                  // a result of unknown type
-    'Numerical x = TableMean(rows, Sum(unknown, 1));',          // inside a secondary operand, variables are not checked
-    'Numerical x = Sum(TableMean(rows, text), 1);',
+    'Numerical x = TableMean(rows, Sum(number, 1));',           // inside a secondary operand, in the dictionary of `rows`
     'Numerical x = Unknown(Sum(number, 1), Sum(undeclared, 2));', // an unknown rule: its operands have no known scope
     'Numerical x = Sum(number, Sum(number, Sum(number, 1)));',
   ]) {
@@ -563,7 +566,7 @@ function testNestedCalls() {
     ['Numerical x = Sum(number, Sum(Length(number), 1));', ["'number' is 'Numerical' but 'Length' expects 'Categorical' for argument 1."]],
     ['Numerical x = Sum(number, Sum(1, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
     ['Numerical x = Unknown(Sum(number, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
-    ['Numerical x = TableMean(rows, Sum(unknown, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
+    ['Numerical x = TableMean(rows, Sum(number, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
     // and the return type of the whole derivation, however deeply it is nested
     ['Categorical x = Sum(number, Sum(number, 1));', ["'Sum' returns 'Numerical' but variable is declared as 'Categorical'."]],
   ]) {
@@ -585,6 +588,71 @@ function testNestedCalls() {
   assert.ok(!messages('Numerical x = Sum(number, Concat(text, ').some(message => message.includes('expects')));
   const deep = `Numerical x = ${'Sum(1, '.repeat(150)}"a"${')'.repeat(150)};`;
   assert.doesNotThrow(() => diagnostics(deep));
+}
+
+function testSecondaryScopes() {
+  const document = (body, extra = '') => `Dictionary Client
+{
+    Categorical id;
+    Numerical age;
+    Table(Purchase) purchases;
+    Entity(Purchase) last;
+    ${body}
+};
+Dictionary Purchase
+{
+    Numerical amount;
+    Categorical shop;
+    Numerical \`unit price\`;
+};${extra}`;
+  const diagnostics = (body, extra) => diagnosticsFor(document(body, extra));
+  const messages = (body, extra) => diagnostics(body, extra).map(diagnostic => diagnostic.message);
+
+  for (const body of [
+    'Numerical x = TableMean(purchases, amount);',
+    'Numerical x = TableMean(purchases, `unit price`);',
+    'Numerical x = GetValue(last, amount);',
+    'Numerical x = TableMean(purchases, Sum(amount, 1));',            // the whole operand is in the secondary table
+    'Table(Purchase) x = Select(purchases, GE(amount, 10));',         // also inside a criterion
+    'Numerical x = TableCount(Select(purchases, GE(amount, 10)));',
+    'Entity(Purchase) x = TableAtRank(purchases, age);',               // an operand documented as current
+    'Numerical x = Sum(TableMean(purchases, amount), age);',           // each rule has its own scope
+    'Numerical x = TableMean(Select(purchases, GE(amount, 1)), anything);', // first operand not a variable: scope unknown
+  ]) {
+    assertNoDiagnostics(body, document(body));
+  }
+  // The dictionary a table points to is not declared: only that is reported, not the operand.
+  assert.deepStrictEqual(messages('Table(Missing) lost;\n    Numerical x = TableMean(lost, anything);'),
+    ["Dictionary 'Missing' is not declared in this file."]);
+  // Several dictionaries with the name: which one is meant is not known.
+  assertNoDiagnostics('duplicate dictionary', document('Numerical x = TableMean(purchases, anything);',
+    '\nDictionary Purchase\n{\n    Numerical other;\n};'));
+
+  const mismatch = (name, actual, rule, expected, argument) =>
+    `'${name}' is '${actual}' but '${rule}' expects '${expected}' for argument ${argument}.`;
+  for (const [body, expected] of [
+    ['Numerical x = TableMean(purchases, shop);', [mismatch('shop', 'Categorical', 'TableMean', 'Numerical', 2)]],
+    ['Numerical x = GetValue(last, shop);', [mismatch('shop', 'Categorical', 'GetValue', 'Numerical', 2)]],
+    ['Numerical x = TableMean(purchases, Sum(shop, 1));', [mismatch('shop', 'Categorical', 'Sum', 'Numerical', 1)]],
+    ['Table(Purchase) x = Select(purchases, GE(shop, 10));', [mismatch('shop', 'Categorical', 'GE', 'Numerical', 1)]],
+    ['Numerical x = TableMean(purchases, age);', ["'age' is not declared in dictionary 'Purchase'."]],
+    ['Numerical x = TableMean(purchases, `no such variable`);', ["'no such variable' is not declared in dictionary 'Purchase'."]],
+    ['Entity(Purchase) x = TableAtRank(purchases, amount);', ["'amount' is not declared in this dictionary."]],
+    ['Entity(Purchase) x = TableAtRank(purchases, id);', [mismatch('id', 'Categorical', 'TableAtRank', 'Numerical', 2)]],
+    // a first operand that is not a table gives no scope to the next one, which is then not checked
+    ['Numerical x = TableMean(age, anything);', [mismatch('age', 'Numerical', 'TableMean', 'Table', 1)]],
+    ['Numerical x = TableMean(undeclared, anything);', ["'undeclared' is not declared in this dictionary."]],
+  ]) {
+    assert.deepStrictEqual(messages(body), expected, body);
+  }
+
+  // A missing variable is a warning; a wrong type an error.
+  const [missing] = diagnostics('Numerical x = TableMean(purchases, age);');
+  assert.strictEqual(missing.severity, 1);
+  assert.strictEqual(diagnostics('Numerical x = TableMean(purchases, shop);')[0].severity, 0);
+  // The diagnostic covers the operand.
+  assert.strictEqual(missing.col, '    Numerical x = TableMean(purchases, '.length);
+  assert.strictEqual(missing.endCol - missing.col, 'age'.length);
 }
 
 function testDictionaryKeysAndNames() {
@@ -679,6 +747,7 @@ function run() {
   testConstantArguments();
   testBackquotedVariableArguments();
   testNestedCalls();
+  testSecondaryScopes();
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();

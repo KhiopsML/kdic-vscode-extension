@@ -85,12 +85,20 @@ function parseCall(tokens: readonly KdicToken[], index: number, limit: number, d
   return undefined;
 }
 
-/** Everything the checks of one dictionary share. */
+/** The variables an operand can name, with how a message calls the dictionary that declares them. */
+interface Scope {
+  variables: ReadonlyMap<string, Declaration>;
+  label: string;
+}
+
+/** Everything the checks of the calls of a file share. */
 interface CallContext {
-  /** Variable name → declared type, for every declaration of the dictionary. */
-  variables: Map<string, string>;
   rules: RuleMaps;
   out: DiagnosticCollector;
+  /** The dictionaries of the file, by name. */
+  dictionaries: ReadonlyMap<string, readonly Dictionary[]>;
+  /** The scope of each dictionary when one of its variables is the table or entity of a rule in another. */
+  scopes: Map<Dictionary, Scope>;
 }
 
 /** A constant must have the type the rule expects; only `Numerical` and `Categorical` have constants. */
@@ -101,12 +109,12 @@ function checkConstant(token: KdicToken, ruleName: string, expected: string, pos
   out.atToken(token, `Constant ${text} is '${actual}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
 }
 
-/** A variable of the current dictionary, plain or between backquotes, must be declared and have the expected type. */
-function checkVariable(token: KdicToken, ruleName: string, expected: string, position: number, { variables, out }: CallContext): void {
+/** A variable of the scope, plain or between backquotes, must be declared and have the expected type. */
+function checkVariable(token: KdicToken, ruleName: string, expected: string, position: number, scope: Scope, { out }: CallContext): void {
   const name = tokenName(token);
-  const actual = variables.get(name);
+  const actual = scope.variables.get(name)?.type.text;
   if (actual === undefined) {
-    out.atToken(token, `'${name}' is not declared in this dictionary.`, Severity.Warning);
+    out.atToken(token, `'${name}' is not declared in ${scope.label}.`, Severity.Warning);
   } else if (actual !== expected) {
     out.atToken(token, `'${name}' is '${actual}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
   }
@@ -121,34 +129,55 @@ function checkNestedResult(nested: RuleCall, ruleName: string, expected: string,
 }
 
 /**
- * Checks a call and, through its arguments, the calls nested in it. `current` tells whether its operands
- * are in the scope of the dictionary being checked: those of a table or entity rule after the first one
- * are in the secondary table, and everything inside them is too. A constant or a nested result has the
- * same type in any scope, so those are checked anyway.
+ * The scope of the operands of a table or entity rule that are in the secondary table: the dictionary the
+ * first operand's `Table(X)` or `Entity(X)` points to. Unknown when the first operand is not a variable
+ * of the scope, or X is not declared exactly once in the file.
+ */
+function secondaryScope(call: RuleCall, scope: Scope | undefined, context: CallContext): Scope | undefined {
+  const [first] = call.args;
+  const target = first?.kind === 'variable' ? scope?.variables.get(tokenName(first.token))?.relationTarget : undefined;
+  const candidates = target && context.dictionaries.get(tokenName(target));
+  if (!target || candidates?.length !== 1) { return undefined; }
+
+  const [dictionary] = candidates;
+  let found = context.scopes.get(dictionary);
+  if (!found) {
+    found = { variables: variablesOf(dictionary), label: `dictionary '${tokenName(target)}'` };
+    context.scopes.set(dictionary, found);
+  }
+  return found;
+}
+
+/**
+ * Checks a call and, through its arguments, the calls nested in it. `scope` is where the call's operands
+ * are resolved, when known. Those of a table or entity rule are in the current scope or, for the operands
+ * documented as secondary, in the dictionary of its first operand's table, and everything inside such an
+ * operand is too. A constant or a nested result has the same type in any scope, so those are checked anyway.
  *
  * Parameters are known by position only when the rule is registered and the call has all of them:
  * some rules also exist with fewer, so other calls get no type checks of their own.
  */
-function checkCall(call: RuleCall, current: boolean, context: CallContext): void {
+function checkCall(call: RuleCall, scope: Scope | undefined, context: CallContext): void {
   const ruleName = call.rule.text;
   const registered = context.rules.paramTypes.get(ruleName);
   const paramTypes = registered && call.args.length >= registered.filter(type => type !== '...').length ? registered : undefined;
   const isRelational = ['Table', 'Entity', 'Block(Table)', 'Block(Entity)'].includes(paramTypes?.[0] ?? '');
+  const secondary = paramTypes && isRelational ? secondaryScope(call, scope, context) : undefined;
 
   call.args.forEach((arg, position) => {
     const expected = (paramTypes && parameterTypeAt(paramTypes, position)) ?? 'any';
     const documentedScope = context.rules.paramScopes.get(ruleName)?.[position];
-    const scope = documentedScope ?? (isRelational && position > 0 ? 'unknown' : 'current');
-    const argumentIsCurrent = current && paramTypes !== undefined && scope === 'current';
+    const kind = documentedScope ?? (isRelational && position > 0 ? 'unknown' : 'current');
+    const argumentScope = paramTypes === undefined ? undefined : kind === 'current' ? scope : kind === 'secondary' ? secondary : undefined;
     const checked = expected !== 'any' && !expected.startsWith('Block(');
 
     if (arg.kind === 'call') {
       if (checked && isConcreteType(expected)) { checkNestedResult(arg.call, ruleName, expected, position, context); }
-      checkCall(arg.call, argumentIsCurrent, context);
+      checkCall(arg.call, argumentScope, context);
     } else if (arg.kind === 'constant' && checked) {
       checkConstant(arg.token, ruleName, expected, position, context);
-    } else if (arg.kind === 'variable' && checked && argumentIsCurrent) {
-      checkVariable(arg.token, ruleName, expected, position, context);
+    } else if (arg.kind === 'variable' && checked && argumentScope) {
+      checkVariable(arg.token, ruleName, expected, position, argumentScope, context);
     }
   });
 }
@@ -161,10 +190,14 @@ function checkReturnType(declaration: Declaration, call: RuleCall, { rules, out 
     `'${call.rule.text}' returns '${returnType}' but variable is declared as '${declaration.type.text}'.`);
 }
 
+/** The variables a dictionary declares, by name (a name declared twice keeps its last declaration). */
+function variablesOf(dictionary: Dictionary): Map<string, Declaration> {
+  return new Map(dictionary.declarations.map(declaration => [declaration.nameText, declaration]));
+}
+
 /** Checks every derivation of a dictionary: `= rule(…)`, with the rules nested in it. */
-function checkDictionaryCalls(dictionary: Dictionary, tokens: readonly KdicToken[], rules: RuleMaps, out: DiagnosticCollector): void {
-  const variables = new Map(dictionary.declarations.map(declaration => [declaration.nameText, declaration.type.text]));
-  const context: CallContext = { variables, rules, out };
+function checkDictionaryCalls(dictionary: Dictionary, tokens: readonly KdicToken[], context: CallContext): void {
+  const scope: Scope = { variables: variablesOf(dictionary), label: 'this dictionary' };
   // Only a derivation written right after the variable's name has a return type to compare with.
   const derived = new Map(dictionary.declarations
     .filter(declaration => declaration.equalsIndex === declaration.nameIndex + 1)
@@ -178,7 +211,7 @@ function checkDictionaryCalls(dictionary: Dictionary, tokens: readonly KdicToken
 
     const declaration = derived.get(index);
     if (declaration) { checkReturnType(declaration, call, context); }
-    checkCall(call, true, context);
+    checkCall(call, scope, context);
   }
 }
 
@@ -188,5 +221,11 @@ function checkDictionaryCalls(dictionary: Dictionary, tokens: readonly KdicToken
  * its parameters. Calls that are not closed yet, as while typing, are not checked.
  */
 export function checkRuleCalls(structure: Structure, tokens: readonly KdicToken[], rules: RuleMaps, out: DiagnosticCollector): void {
-  for (const dictionary of structure.dictionaries) { checkDictionaryCalls(dictionary, tokens, rules, out); }
+  const dictionaries = new Map<string, Dictionary[]>();
+  for (const dictionary of structure.dictionaries) {
+    const name = dictionary.header.name;
+    if (name) { dictionaries.set(tokenName(name), [...(dictionaries.get(tokenName(name)) ?? []), dictionary]); }
+  }
+  const context: CallContext = { rules, out, dictionaries, scopes: new Map() };
+  for (const dictionary of structure.dictionaries) { checkDictionaryCalls(dictionary, tokens, context); }
 }

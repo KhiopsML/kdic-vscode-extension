@@ -178,7 +178,7 @@ The validator SHALL check recognized variable-block members and closing declarat
 - **THEN** the validator reports the corresponding error, positioned on the offending text
 
 ### Requirement: Derivation type checks
-The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), including the calls nested in their arguments, with registered rule types, without claiming complete derivation analysis. Argument diagnostics SHALL use the current dictionary only when the operand is known to have current scope.
+The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), including the calls nested in their arguments, with registered rule types, without claiming complete derivation analysis. A variable argument SHALL be looked up in the dictionary where its scope resolves it: the current dictionary, or, for an operand documented as secondary, the dictionary that the first operand's `Table(X)` or `Entity(X)` points to. An operand whose scope is not known SHALL NOT be checked against any dictionary.
 
 #### Scenario: Return type mismatch
 - **WHEN** a call to registered `TableCount` is assigned to a `Categorical` variable
@@ -220,9 +220,21 @@ The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), 
 - **WHEN** `TableMean(achats, montant)` uses `achats` as a table and the current dictionary declares a `Categorical montant` while the secondary dictionary declares a `Numerical montant`
 - **THEN** the validator does not report an argument-type error based on the current dictionary's `montant`
 
-#### Scenario: Secondary operand absent locally
-- **WHEN** `TableMean(achats, montant)` refers to a secondary-table operand not declared in the current dictionary
-- **THEN** the validator does not warn that `montant` is undeclared in the current dictionary
+#### Scenario: Secondary operand
+- **WHEN** an operand documented as secondary names a variable of the dictionary that the first operand's `Table(X)` or `Entity(X)` points to, plainly or between backquotes
+- **THEN** its type is compared with the expected one, and a mismatch is an error
+- **WHEN** it names a variable that dictionary does not declare, including one of the current dictionary
+- **THEN** the validator reports a warning naming that dictionary
+- **WHEN** the operand is a nested call
+- **THEN** the variables of the calls nested in it are looked up in that dictionary too, and so are those of a nested table rule's own current-scope operands
+
+#### Scenario: Operand documented as current after the first
+- **WHEN** an operand of a table rule after the first is documented as current, as the rank of `TableAt` or the keys of `TableAtKey`
+- **THEN** it is checked in the current dictionary
+
+#### Scenario: Scope that cannot be resolved
+- **WHEN** the first operand of the rule is not a variable of the scope, is not a table or entity, or points to a dictionary that is not declared exactly once in the file
+- **THEN** the operands documented as secondary are not checked against any dictionary
 
 #### Scenario: Later current-scope operand
 - **WHEN** `TableDifference(first, second)` has `first` declared as a table and `second` declared as `Categorical` in the current dictionary
@@ -267,8 +279,8 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled v
 ## Known limitations
 
 - The official variable-block reference requires a `VarKey` for each member. The built-in checks do not enforce its presence, uniqueness, or validity.
-- Cross-table scopes, joins, and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
+- Joins, the scope operator `.` (an argument starting with it is not checked) and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
 - The `#Khiops` header line and dictionary metadata are accepted as structural patterns; their exact compatibility with native Khiops is not established.
-- Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. Operands of another scope are not type-checked. The parameters of the rules that build structures (`DataGrid`, `ValueGroups`, `NBClassifier`, …) are declared `Structure(…)` and are registered as `any`, so the calls nested in them are not compared.
+- Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. The operand scopes of a rule are registered only for the table and entity rules that were measured on Khiops (`operandScopes`); the operands of the others, such as `TableModeAt`, `TableUnion` or `GetEntity`, are not type-checked. The parameters of the rules that build structures (`DataGrid`, `ValueGroups`, `NBClassifier`, …) are declared `Structure(…)` and are registered as `any`, so the calls nested in them are not compared.
 - A declaration the structure scan cannot recognize (for example junk before its type on the same line) is reported as an unknown line, and is not type-checked.
 - Native Khiops checks a date or time format only loosely (length, field positions and separators), so it accepts a few garbled variants of a time or timestamp format, such as `HH:MM:Ss` or `HH.MM ` with a trailing space. The built-in check reports every string outside the documented formats, so it can flag a format that Khiops would load.

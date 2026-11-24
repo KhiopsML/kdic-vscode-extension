@@ -21,8 +21,10 @@ Append one entry to `DERIVATION_RULES` in `src/derivation-rules.ts`. **No other 
   (`Numerical|Categorical` is a union, `any` is unchecked).
 - Signature parsing: `TypeName argName` → expected type; a bare `argName` → `any` (unchecked);
   a last parameter `...` → varargs (extra positions repeat the type before `...`, unless a parameter is `any` or a structure, in which case they are unchecked); `Block(Type) argName` → block argument (not type-checked).
-- Relational rules (first parameter `Table`/`Entity`): operands after the first are treated as
-  secondary-scope and unchecked, unless the rule lists `operandScopes: ['current', 'secondary', …]`.
+- Relational rules (first parameter `Table`/`Entity`): operands after the first are unchecked unless the rule lists
+  `operandScopes: ['current', 'secondary', …]`. A `'secondary'` operand is checked in the dictionary that the first
+  operand's `Table(X)`/`Entity(X)` points to, a `'current'` one in the current dictionary, `'unknown'` is not checked.
+  Do not guess a scope: measure it on Khiops with a variable declared in only one of the two dictionaries.
 
 ## Adding a type
 

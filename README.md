@@ -48,7 +48,7 @@ Real-time diagnostics for simple derivation rule calls (non-nested arguments onl
 
 - **Return-type mismatch**: the declared variable type does not match the function's return type.
   > `Categorical x = TableCount(t);` → error on `Categorical` (TableCount returns `Numerical`)
-- **Argument-type mismatch**: an argument variable has the wrong type for its parameter position.
+- **Argument-type mismatch**: an argument variable, plain or between backquotes, has the wrong type for its parameter position.
   > `TableCount(Class)` where `Class` is `Categorical` → error on `Class` (expected `Table`)
 - **Constant-type mismatch**: a string constant where a `Numerical` is expected, or a number or `#Missing` where a `Categorical` is expected.
   > `Concat("a", #Missing)` → error on `#Missing` (`Concat` expects `Categorical`)

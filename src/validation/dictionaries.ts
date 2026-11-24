@@ -149,9 +149,10 @@ function checkConstantArgument(
 /**
  * Checks the arguments of every simple rule call in the block (`= rule(a, b)`).
  * A constant must have the type the rule expects. A bare variable of the current
- * dictionary must be declared and have that type; operands of another scope are
- * left to Khiops. Where a rule ends with `...`, the extra arguments repeat the last type. A call with
- * fewer arguments than the rule has parameters is not checked.
+ * dictionary, written plainly or between backquotes, must be declared and have that
+ * type; operands of another scope are left to Khiops. Where a rule ends with `...`,
+ * the extra arguments repeat the last type. A call with fewer arguments than the
+ * rule has parameters is not checked.
  */
 function checkRuleArguments(
   { dictionary, variables }: DictionaryScope, tokens: readonly KdicToken[], rules: RuleMaps, out: DiagnosticCollector,
@@ -171,17 +172,17 @@ function checkRuleArguments(
     call.args.forEach((arg, position) => {
       const expected = parameterTypeAt(paramTypes, position) ?? 'any';
       if (arg.length !== 1 || expected === 'any' || expected.startsWith('Block(')) { return; }
-      if (arg[0].kind !== 'identifier') { checkConstantArgument(arg[0], expected, ruleName, position, out); return; }
+      const [variable] = arg;
+      if (!isNameToken(variable)) { checkConstantArgument(variable, expected, ruleName, position, out); return; }
       const scope = rules.paramScopes.get(ruleName)?.[position] ?? (isRelational && position > 0 ? 'unknown' : 'current');
       if (scope !== 'current') { return; }
 
-      const variable = arg[0];
-      const actual = variables.get(variable.text);
+      const name = tokenName(variable);
+      const actual = variables.get(name);
       if (actual === undefined) {
-        out.atToken(variable, `'${variable.text}' is not declared in this dictionary.`, Severity.Warning);
+        out.atToken(variable, `'${name}' is not declared in this dictionary.`, Severity.Warning);
       } else if (actual !== expected) {
-        out.atToken(variable,
-          `'${variable.text}' is '${actual}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
+        out.atToken(variable, `'${name}' is '${actual}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
       }
     });
   }

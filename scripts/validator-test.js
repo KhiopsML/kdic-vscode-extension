@@ -484,6 +484,43 @@ function testConstantArguments() {
     [mismatch('"r"', 'Categorical', 'Overloaded', 'Numerical', 3)]);
 }
 
+function testBackquotedVariableArguments() {
+  const document = declaration => `Dictionary Records
+{
+    Categorical \`the text\`;
+    Numerical \`a \`\`quoted\`\` number\`;
+    Numerical plain;
+    Table(Records) rows;
+    ${declaration}
+};`;
+  const diagnostics = declaration => diagnosticsFor(document(declaration));
+
+  for (const declaration of [
+    'Categorical x = Concat(`the text`, "b");',
+    'Numerical x = Sum(`a ``quoted`` number`, 1, `a ``quoted`` number`);',
+    'Numerical x = Sum(`plain`, plain);',          // backquotes around a plain name denote the same variable
+    'Numerical x = TableMean(rows, `other table`);', // an operand of the secondary table is not checked
+  ]) {
+    assertNoDiagnostics(declaration, document(declaration));
+  }
+
+  // The message names the variable as declared, without backquotes.
+  assert.deepStrictEqual(diagnostics('Numerical x = Sum(`the text`, 1);').map(d => d.message),
+    ["'the text' is 'Categorical' but 'Sum' expects 'Numerical' for argument 1."]);
+  assert.deepStrictEqual(diagnostics('Categorical x = Concat("a", `a ``quoted`` number`);').map(d => d.message),
+    ["'a `quoted` number' is 'Numerical' but 'Concat' expects 'Categorical' for argument 2."]);
+  assert.deepStrictEqual(diagnostics('Categorical x = Concat(`plain`, "b");').map(d => d.message),
+    ["'plain' is 'Numerical' but 'Concat' expects 'Categorical' for argument 1."]);
+
+  // The diagnostic covers the whole quoted token; an undeclared name is a warning.
+  const [mismatch] = diagnostics('Numerical x = Sum(`the text`, 1);');
+  assert.strictEqual(mismatch.col, '    Numerical x = Sum('.length);
+  assert.strictEqual(mismatch.endCol - mismatch.col, '`the text`'.length);
+  const [undeclared] = diagnostics('Numerical x = Sum(`no such variable`, 1);');
+  assert.strictEqual(undeclared.message, "'no such variable' is not declared in this dictionary.");
+  assert.strictEqual(undeclared.severity, 1);
+}
+
 function testDictionaryKeysAndNames() {
   assertNoDiagnostics('quoted multiline key', 'Dictionary Records (\n `a,b`,\n `a``b`\n)\n{\n Categorical `a,b`;\n Categorical `a``b`;\n};');
   assertNoDiagnostics('quoted parenthesis in key', 'Dictionary Records (`a)b`)\n{\n Categorical `a)b`;\n};');
@@ -574,6 +611,7 @@ function run() {
   testFormatStrings();
   testFormatExamples();
   testConstantArguments();
+  testBackquotedVariableArguments();
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();

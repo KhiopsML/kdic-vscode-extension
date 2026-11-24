@@ -208,6 +208,10 @@ The validator SHALL compare recognized simple calls (`= rule(arg, …)` without 
 - **WHEN** a simple call has a current-scope bare identifier argument with a known expected type that is not declared in the current dictionary
 - **THEN** the validator reports an undeclared-variable warning
 
+#### Scenario: Backquoted variable argument
+- **WHEN** a simple call has a current-scope argument written between backquotes, such as `` `Predicted class` ``
+- **THEN** it is checked like a plain variable, by its name without backquotes (a doubled backquote standing for one), and the diagnostics name it that way
+
 #### Scenario: Separators inside quoted arguments
 - **WHEN** a string argument contains commas, or a backtick-quoted argument contains parentheses
 - **THEN** those characters neither split the argument nor hide the call from the checks

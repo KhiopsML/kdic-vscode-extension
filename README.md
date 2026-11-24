@@ -129,7 +129,7 @@ Recognised structural patterns include:
 
 ### Language Configuration
 
-- Auto-closing pairs: `{}`, `()`, `""`, ` `` `, `<>`
+- Auto-closing pairs: `{}`, `()`, `[]`, `""`, ` `` `, `<>`
 - Auto-indent inside `{ }` blocks
 - Line comment toggling with `Ctrl+/` / `Cmd+/`
 

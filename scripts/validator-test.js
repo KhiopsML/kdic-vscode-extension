@@ -34,6 +34,7 @@ const rules = buildRuleMaps([
   { label: 'Pick', returnType: 'Numerical|Categorical', signature: 'Pick(Numerical index, Categorical value)' },
   { label: 'Anything', returnType: 'any', signature: 'Anything(Numerical value)' },
   { label: 'GE', returnType: 'Numerical', signature: 'GE(Numerical value1, Numerical value2)' },
+  { label: 'EQc', returnType: 'Numerical', signature: 'EQc(Categorical value1, Categorical value2)' },
   { label: 'Select', returnType: 'Table', signature: 'Select(Table table, Numerical criterion)', operandScopes: ['current', 'secondary'] },
   { label: 'GetValue', returnType: 'Numerical', signature: 'GetValue(Entity entity, Numerical value)', operandScopes: ['current', 'secondary'] },
   { label: 'TableAtRank', returnType: 'Entity', signature: 'TableAtRank(Table table, Numerical rank)', operandScopes: ['current', 'current'] },
@@ -486,6 +487,7 @@ function testConstantArguments() {
   // Rules the signature does not describe well are left to Khiops.
   assertNoDiagnostics('extra operands of an untyped rule', document('Categorical x = Deploy(rows, 1, rows, text, "a", 3);'));
   assertNoDiagnostics('call with fewer arguments than parameters', document('Numerical x = Overloaded(text, 1);'));
+  assertNoDiagnostics('call with more arguments than parameters', document('Numerical x = Overloaded(text, "t", "r", 1);'));
   assert.deepStrictEqual(messages('Numerical x = Overloaded(text, "t", "r");'),
     [mismatch('"r"', 'Categorical', 'Overloaded', 'Numerical', 3)]);
 }
@@ -655,6 +657,81 @@ Dictionary Purchase
   assert.strictEqual(missing.endCol - missing.col, 'age'.length);
 }
 
+function testScopeOperator() {
+  const document = body => `Dictionary Client
+{
+    Categorical id;
+    Numerical age;
+    Categorical segment;
+    Table(Purchase) purchases;
+    Table(Purchase) others;
+    ${body}
+};
+Dictionary Purchase
+{
+    Numerical amount;
+    Categorical shop;
+    Table(Item) items;
+};
+Dictionary Item
+{
+    Numerical price;
+    Categorical sku;
+};`;
+  const diagnostics = body => diagnosticsFor(document(body));
+  const messages = body => diagnostics(body).map(diagnostic => diagnostic.message);
+  const select = criterion => `Table(Purchase) x = Select(purchases, ${criterion});`;
+  const deeper = criterion => select(`GE(TableCount(Select(items, ${criterion})), 1)`);
+
+  for (const body of [
+    select('GE(amount, .age)'),
+    select('EQc(shop, .segment)'),
+    select('GE(amount, . age)'),                          // a space after the dot is allowed
+    select('GE(amount, .Sum(age, 1))'),                   // a call behind a dot is evaluated one scope up
+    select('GE(amount, .Sum(.age, 1))'),                  // dots inside it count from where the operand is written
+    select('GE(TableCount(.others), 1)'),                 // the first operand of a nested table rule
+    deeper('GE(price, ..age)'),                           // two dots: two scopes up
+    deeper('GE(price, .amount)'),
+    'Numerical x = Mystery(purchases, .age);',            // an unregistered rule: its scope is unknown
+    'Numerical x = Overloaded(segment, "t", 1, .age);',    // a rule called in a form its signature does not describe
+    'Numerical x = TableMean(Select(purchases, GE(amount, 1)), .age);',
+  ]) {
+    assertNoDiagnostics(body, document(body));
+  }
+
+  const beyond = dots => [`Scope operator '${dots}' goes beyond the depth of the calling rules.`];
+  const mismatch = (name, actual, rule, expected, argument) =>
+    [`'${name}' is '${actual}' but '${rule}' expects '${expected}' for argument ${argument}.`];
+  for (const [body, expected] of [
+    [select('GE(amount, .amount)'), ["'amount' is not declared in this dictionary."]],      // not in the scope above
+    [select('EQc(shop, .age)'), mismatch('age', 'Numerical', 'EQc', 'Categorical', 2)],
+    [select('EQc(shop, .Sum(age, 1))'), ["'Sum' returns 'Numerical' but 'EQc' expects 'Categorical' for argument 2."]],
+    [select('GE(amount, .Sum(amount, 1))'), ["'amount' is not declared in this dictionary."]], // the call is evaluated in Client
+    [select('GE(amount, .Sum(..age, 1))'), beyond('..')],
+    [deeper('GE(price, .age)'), ["'age' is not declared in dictionary 'Purchase'."]],
+    [deeper('GE(price, ..amount)'), ["'amount' is not declared in this dictionary."]],
+    ['Numerical x = Sum(.age, 1);', beyond('.')],
+    [select('GE(amount, ..age)'), beyond('..')],
+    [select('GE(TableCount(..others), 1)'), beyond('..')],
+    ['Numerical x = Sum(.Sum(age, 1), 1);', beyond('.')],
+  ]) {
+    assert.deepStrictEqual(messages(body), expected, body);
+  }
+
+  // A missing variable is a warning, a wrong type or a scope beyond the depth an error.
+  assert.strictEqual(diagnostics(select('GE(amount, .amount)'))[0].severity, 1);
+  assert.strictEqual(diagnostics(select('EQc(shop, .age)'))[0].severity, 0);
+  assert.strictEqual(diagnostics('Numerical x = Sum(.age, 1);')[0].severity, 0);
+
+  // The error covers the dots, the other diagnostics the variable.
+  const [dots] = diagnostics('Numerical x = Sum(..age, 1);');
+  assert.strictEqual(dots.col, '    Numerical x = Sum('.length);
+  assert.strictEqual(dots.endCol - dots.col, 2);
+  const [variable] = diagnostics(select('EQc(shop, .age)'));
+  assert.strictEqual(variable.col, '    Table(Purchase) x = Select(purchases, EQc(shop, .'.length);
+  assert.strictEqual(variable.endCol - variable.col, 'age'.length);
+}
+
 function testDictionaryKeysAndNames() {
   assertNoDiagnostics('quoted multiline key', 'Dictionary Records (\n `a,b`,\n `a``b`\n)\n{\n Categorical `a,b`;\n Categorical `a``b`;\n};');
   assertNoDiagnostics('quoted parenthesis in key', 'Dictionary Records (`a)b`)\n{\n Categorical `a)b`;\n};');
@@ -748,6 +825,7 @@ function run() {
   testBackquotedVariableArguments();
   testNestedCalls();
   testSecondaryScopes();
+  testScopeOperator();
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();

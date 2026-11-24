@@ -80,7 +80,7 @@ The built-in validator checks common problems while you edit, including:
 - Dictionary and variable names longer than 128 characters
 - Date and time format metadata (`DateFormat`, `TimeFormat`, `TimestampFormat`, `TimestampTZFormat`) on a variable of another type, without a string value, or with a format Khiops does not know
 
-Built-in validation is intentionally structural and best-effort. Arguments are checked in the dictionary they are resolved in, including the dictionary of the table for the secondary operands of table and entity rules; operands whose scope is not known are not type-checked. The native Khiops parser remains authoritative for the scope operator, joins, and complex block contents.
+Built-in validation is intentionally structural and best-effort. Arguments are checked in the dictionary they are resolved in, including the dictionary of the table for the secondary operands of table and entity rules; operands whose scope is not known are not type-checked. The scope operator `.` is followed up the enclosing scopes. The native Khiops parser remains authoritative for joins and complex block contents.
 
 VS Code turns every carriage return of a file into a line break in the editor, whereas Khiops only treats `\n` as one: an isolated `\r` inside quoted text is legal in a `.kdic` file. For such a file the editor text no longer matches the file, so the built-in diagnostics are turned off for it and the native Khiops check is the one to rely on. Saving rewrites the file with ordinary line breaks, and built-in diagnostics resume.
 

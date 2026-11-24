@@ -200,9 +200,9 @@ The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), 
 - **WHEN** a parameter of the rule is `any` or a structure, such as `DataGridDeployment`
 - **THEN** the extra arguments are not checked
 
-#### Scenario: Call with fewer arguments than parameters
-- **WHEN** a call has fewer arguments than the rule has parameters, as a rule that also exists in a shorter form (`ContributionValueAt` with a rank only)
-- **THEN** its arguments are not type-checked, since their positions do not match the registered signature
+#### Scenario: Call that the signature does not describe
+- **WHEN** a call has fewer arguments than the rule has parameters, as a rule that also exists in a shorter form (`ContributionValueAt` with a rank only), or more arguments than a rule without `...` has
+- **THEN** its arguments are not type-checked and their scope is unknown, since their positions do not match the registered signature
 
 #### Scenario: Missing argument variable
 - **WHEN** a call has a current-scope bare identifier argument with a known expected type that is not declared in the current dictionary
@@ -231,6 +231,20 @@ The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), 
 #### Scenario: Operand documented as current after the first
 - **WHEN** an operand of a table rule after the first is documented as current, as the rank of `TableAt` or the keys of `TableAtKey`
 - **THEN** it is checked in the current dictionary
+
+#### Scenario: Scope operator
+- **WHEN** an operand is a variable or a call written behind one or more dots, such as `.name`, `..name` or `.rule(…)`, with or without a space after them
+- **THEN** it is resolved as many scopes above the one its operand is written in as it has dots: the scope the enclosing table rule is evaluated in for one dot
+- **WHEN** it is a variable, its type is compared with the expected one, and a name that scope does not declare is a warning naming it
+- **WHEN** it is a call, its result is compared with the expected type and its own operands, which have no dots, are resolved in that upper scope
+- **WHEN** an operand has dots inside a call that is itself behind dots
+- **THEN** its dots are counted from where the whole operand is written, not from the call's scope
+
+#### Scenario: Scope operator beyond the outermost scope
+- **WHEN** an operand has more dots than there are scopes above the one it is written in, as in `Sum(.Age, 1)` at the top level
+- **THEN** the validator reports an error on the dots, as Khiops does
+- **WHEN** the scopes above are not known, because the table of an enclosing rule is not resolved or its rule is not registered
+- **THEN** the validator reports nothing
 
 #### Scenario: Scope that cannot be resolved
 - **WHEN** the first operand of the rule is not a variable of the scope, is not a table or entity, or points to a dictionary that is not declared exactly once in the file
@@ -279,7 +293,7 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled v
 ## Known limitations
 
 - The official variable-block reference requires a `VarKey` for each member. The built-in checks do not enforce its presence, uniqueness, or validity.
-- Joins, the scope operator `.` (an argument starting with it is not checked) and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
+- Joins and the complete grammar are not validated; a constant behind a dot, which Khiops rejects, is not reported; absence of a diagnostic does not establish Khiops validity.
 - The `#Khiops` header line and dictionary metadata are accepted as structural patterns; their exact compatibility with native Khiops is not established.
 - Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. The operand scopes of a rule are registered only for the table and entity rules that were measured on Khiops (`operandScopes`); the operands of the others, such as `TableModeAt`, `TableUnion` or `GetEntity`, are not type-checked. The parameters of the rules that build structures (`DataGrid`, `ValueGroups`, `NBClassifier`, …) are declared `Structure(…)` and are registered as `any`, so the calls nested in them are not compared.
 - A declaration the structure scan cannot recognize (for example junk before its type on the same line) is reported as an unknown line, and is not type-checked.

@@ -25,6 +25,7 @@ Append one entry to `DERIVATION_RULES` in `src/derivation-rules.ts`. **No other 
   `operandScopes: ['current', 'secondary', …]`. A `'secondary'` operand is checked in the dictionary that the first
   operand's `Table(X)`/`Entity(X)` points to, a `'current'` one in the current dictionary, `'unknown'` is not checked.
   Do not guess a scope: measure it on Khiops with a variable declared in only one of the two dictionaries.
+  A dot in front of an operand (`.x`, `..x`, `.rule(…)`) goes one scope up per dot; each scope keeps a link to its parent.
 
 ## Adding a type
 

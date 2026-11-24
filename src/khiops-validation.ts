@@ -3,12 +3,11 @@
  *
  * Free of any VS Code dependency.
  */
-import { tokenName, tokenizeKdic } from './kdic-lexer';
-import { decodeIdentifier, IDENTIFIER_PATTERN } from './kdic-syntax';
+import { isNameToken, tokenName, tokenizeKdic, type KdicToken } from './kdic-lexer';
 import { KdicTextDocument } from './kdic-text-document';
 import { DiagnosticCollector } from './validation/diagnostics';
 import { scanMetadata } from './validation/metadata';
-import { scanStructure } from './validation/structure';
+import { scanStructure, type Declaration, type Structure } from './validation/structure';
 
 export interface KhiopsErrorLocation {
   /** Zero-based line of the error in the dictionary file. */
@@ -23,41 +22,102 @@ const ERROR = /error\s*:\s*(.+)$/;
 /** Summary lines that repeat errors already reported individually. */
 const SUMMARY = /Errors detected during parsing|Read cancelled/i;
 
-/**
- * Finds the line declaring `variableName` in dictionary `dictionaryName`.
- * Returns undefined unless exactly one declaration matches.
+/*
+ * Khiops prints names decoded: no backquotes, a doubled backquote written once, and
+ * spaces or colons left as they are. They are compared as such with the decoded names
+ * of the document, and delimited by the fixed words around them.
  */
-function findDeclarationLine(text: string, dictionaryName: string, variableName: string): number | undefined {
+/** `Variable v not found (in dictionary D)` — v is used in a derivation but declared nowhere in D. */
+const VARIABLE_NOT_FOUND = /\bVariable (.+) not found \(in dictionary (.+)\)$/i;
+/** `Dictionary D : Variable v : …` — an error about the declaration of v. */
+const DECLARED_VARIABLE = /\bDictionary (.+?) : Variable (.+?) : /i;
+
+/** The tokens of a document (comments dropped) and the dictionaries they form. */
+interface ScannedDocument {
+  document: KdicTextDocument;
+  tokens: KdicToken[];
+  structure: Structure;
+}
+
+function scanDocument(text: string): ScannedDocument {
   const document = new KdicTextDocument(text);
   const ignored = new DiagnosticCollector(document); // only the structure is of interest here
   const tokens = tokenizeKdic(text).filter(token => token.kind !== 'comment');
-  const structure = scanStructure(tokens, scanMetadata(tokens, ignored), ignored, undefined);
+  return { document, tokens, structure: scanStructure(tokens, scanMetadata(tokens, ignored), ignored, undefined) };
+}
 
-  const matches = structure.dictionaries
+/** The declarations of every dictionary called `dictionaryName`, in document order. */
+function declarationsOf(scan: ScannedDocument, dictionaryName: string): Declaration[] {
+  return scan.structure.dictionaries
     .filter(dictionary => dictionary.header.name && tokenName(dictionary.header.name) === dictionaryName)
-    .flatMap(dictionary => dictionary.declarations)
-    .filter(declaration => declaration.nameText === variableName);
-  return matches.length === 1 ? document.positionAt(matches[0].start.start).line : undefined;
+    .flatMap(dictionary => dictionary.declarations);
+}
+
+/** Finds the lines of a document by what an error message names; scans the document at most once. */
+class ErrorLocator {
+  private scanned: ScannedDocument | undefined;
+  /** How many errors were already placed for each `dictionary/variable` reference. */
+  private readonly placedReferences = new Map<string, number>();
+
+  constructor(private readonly text: string) {}
+
+  private get scan(): ScannedDocument {
+    return this.scanned ??= scanDocument(this.text);
+  }
+
+  /** The line declaring `variableName` in `dictionaryName`; undefined unless exactly one declaration matches. */
+  declarationLine(dictionaryName: string, variableName: string): number | undefined {
+    const matches = declarationsOf(this.scan, dictionaryName).filter(declaration => declaration.nameText === variableName);
+    return matches.length === 1 ? this.lineOf(matches[0].start) : undefined;
+  }
+
+  /**
+   * The line of the next unreported use of `variableName` in the derivations of `dictionaryName`.
+   * Khiops reports every use, in document order, so the n-th error belongs to the n-th use.
+   */
+  nextReferenceLine(dictionaryName: string, variableName: string): number | undefined {
+    const uses = declarationsOf(this.scan, dictionaryName).flatMap(declaration =>
+      this.derivationTokens(declaration).filter((token, index, derivation) =>
+        isNameToken(token) && tokenName(token) === variableName
+        && derivation[index + 1]?.text !== '(')); // `name(` calls a rule rather than reading a variable
+
+    const key = `${dictionaryName}/${variableName}`;
+    const placed = this.placedReferences.get(key) ?? 0;
+    this.placedReferences.set(key, placed + 1);
+    const use = uses[placed] ?? uses[0];
+    return use && this.lineOf(use);
+  }
+
+  /** The tokens after the `=` of a declaration's derivation, or none for a declaration without one. */
+  private derivationTokens({ equalsIndex, endIndex }: Declaration): KdicToken[] {
+    return equalsIndex === undefined || endIndex === undefined ? [] : this.scan.tokens.slice(equalsIndex + 1, endIndex);
+  }
+
+  private lineOf(token: KdicToken): number {
+    return this.scan.document.positionAt(token.start).line;
+  }
 }
 
 /**
  * Locates an error that carries no line number but names its dictionary and
- * variable (`Dictionary D : Variable v : …`) by finding that declaration.
+ * variable: at the variable's declaration, or, when the variable is missing, at its use.
  */
-function locateByDeclaration(message: string, documentText: string): number | undefined {
-  const dictionary = new RegExp(`\\bDictionary\\s+(${IDENTIFIER_PATTERN})`, 'i').exec(message);
-  const variable = new RegExp(`\\bVariable\\s+(${IDENTIFIER_PATTERN})`, 'i').exec(message);
-  if (!dictionary || !variable) { return undefined; }
-  return findDeclarationLine(documentText, decodeIdentifier(dictionary[1]), decodeIdentifier(variable[1]));
+function locateByName(message: string, locator: ErrorLocator): number | undefined {
+  const missing = VARIABLE_NOT_FOUND.exec(message);
+  if (missing) { return locator.nextReferenceLine(missing[2], missing[1]); }
+
+  const declared = DECLARED_VARIABLE.exec(message);
+  return declared ? locator.declarationLine(declared[1], declared[2]) : undefined;
 }
 
 /**
  * Extracts the errors from Khiops output and places each one on a line of the
- * dictionary file: the line Khiops reports, else the declaration the message
- * names, else the first line.
+ * dictionary file: the line Khiops reports, else the declaration or use the
+ * message names, else the first line.
  */
 export function parseKhiopsErrorLocations(output: string, documentText: string): KhiopsErrorLocation[] {
   const locations: KhiopsErrorLocation[] = [];
+  const locator = new ErrorLocator(documentText);
   for (const outputLine of output.split(/\r?\n/)) {
     const withLine = ERROR_WITH_LINE.exec(outputLine);
     if (withLine) {
@@ -67,7 +127,7 @@ export function parseKhiopsErrorLocations(output: string, documentText: string):
 
     const message = ERROR.exec(outputLine)?.[1].trim();
     if (!message || SUMMARY.test(message)) { continue; }
-    locations.push({ line: locateByDeclaration(message, documentText) ?? 0, message });
+    locations.push({ line: locateByName(message, locator) ?? 0, message });
   }
   return locations;
 }

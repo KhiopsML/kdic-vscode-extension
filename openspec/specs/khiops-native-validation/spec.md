@@ -86,8 +86,12 @@ The extension SHALL turn recognized native error output into VS Code error diagn
 - **WHEN** captured output contains a recognized non-summary error without a line number that identifies a dictionary and variable declared exactly once in the document
 - **THEN** the corresponding diagnostic is placed on that variable's declaration line in that dictionary
 
+#### Scenario: Error names a variable that is not declared
+- **WHEN** captured output contains an error `Variable v not found (in dictionary D)` without a line number
+- **THEN** the corresponding diagnostic is placed on the line of the use of `v` in the derivations of dictionary `D`, the n-th such error of `v` going to its n-th use
+
 #### Scenario: Error without a line number
-- **WHEN** captured output contains a recognized non-summary error without a line number and it cannot be resolved to a unique declaration
+- **WHEN** captured output contains a recognized non-summary error without a line number and it cannot be resolved to a declaration or a use
 - **THEN** the corresponding diagnostic is placed on the first line
 
 ### Requirement: Debug traces

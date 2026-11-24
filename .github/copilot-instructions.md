@@ -17,11 +17,11 @@ the smoke-test CLI load directly from `out/`.
 | `src/kdic-text-document.ts` | `KdicTextDocument`: plain text with a line index (`KdicDocument`; used by tests, the CLI and Khiops-output parsing) |
 | `src/derivation-rules.ts` | `DERIVATION_RULES`: ~300 built-in rules (completion, hover, type checking) |
 | `src/date-time-formats.ts` | `formatsOf()`, `isValidFormat()`: the date, time, timestamp and timestamp-tz formats Khiops documents |
-| `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES`, `METADATA_KEYS` (completion, hover) |
+| `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES`, `METADATA_KEYS`, `MISSING_VALUE` (completion, hover) |
 | `src/rule-maps.ts` | `buildRuleMaps()`: parameter-type, return-type and operand-scope maps built from the rules |
 | `src/kdic-syntax.ts` | `KDIC_TYPES`, `FORMAT_METADATA_KEYS`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
 | `src/kdic-lexer.ts` | `tokenizeKdic()`: tokens with offsets, comments and quote state |
-| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key?) |
+| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key? which type does the open rule call expect?) |
 | `src/validator.ts` | `validate(document, rules, cursorLine?)`: runs the checks below, returns `KdicDiagnostic[]` |
 | `src/validation/*.ts` | The individual checks (below) |
 | `src/khiops-runner.ts` | Finds the Khiops binary and runs it on a dictionary file |

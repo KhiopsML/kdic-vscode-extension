@@ -22,7 +22,7 @@ const vscode = {
   Position, Range, CompletionItem,
   MarkdownString: StringValue,
   SnippetString: StringValue,
-  CompletionItemKind: { Keyword: 0, TypeParameter: 1, Function: 2, Class: 3, Property: 4 },
+  CompletionItemKind: { Keyword: 0, TypeParameter: 1, Function: 2, Class: 3, Property: 4, Constant: 5 },
   languages: {
     registerCompletionItemProvider: (_selector, provider) => { completionProvider = provider; return disposable; },
     registerHoverProvider: () => disposable,
@@ -107,6 +107,48 @@ const tests = [
     assert.deepStrictEqual(completions('Date d ; // <'), []);
     assert.ok(!completions('Categorical c = Concat("<').includes('DateFormat'));
     assert.deepStrictEqual(completions('Dictionary D <', ''), []);
+  }],
+  ['#Missing where a rule expects a Numerical', () => {
+    for (const prefix of [
+      'Numerical x = EQ(Age, ', 'Numerical x = EQ(', 'Numerical x = Sum(Age, Age, ', 'Numerical x = Sum(Age, Sum(',
+      'Numerical x = Sum(Age, Mi', 'Numerical x = Sum(Age,\t', 'Numerical x = TableMean(t, ',
+    ]) {
+      assert.ok(completions(prefix).includes('#Missing'), prefix);
+    }
+    // The list stays the usual one, with `#Missing` added.
+    assert.ok(completions('Numerical x = EQ(Age, ').includes('TableCount'));
+    const [item] = completionItems('Numerical x = EQ(Age, ').filter(candidate => candidate.label === '#Missing');
+    assert.strictEqual(item.range, undefined);
+  }],
+  ['#Missing on a continuation line', () => {
+    assert.ok(completions('    ', 'Dictionary Main\n{\n  Numerical x = Sum(Age,\n').includes('#Missing'));
+    assert.ok(completions('    ', 'Dictionary Main\n{\n  Numerical x = Sum(Age, // note\n').includes('#Missing'));
+  }],
+  ['no #Missing elsewhere', () => {
+    for (const prefix of [
+      'Numerical x = ', 'Numerical x = EQ(Age ', 'Numerical x = EQ(Age, 3, ', 'Categorical c = Concat("a", ',
+      'Categorical c = Concat(Age, ', 'Numerical x = Sum(Age, Concat(', 'Numerical x = Unknown(',
+      'Numerical x = EQ(Age, "a, ', 'Numerical x = EQ(Age); Numerical y = ', 'Numerical x = TableMean(',
+      'Numerical x = CopyBlock(', 'Categorical c',
+    ]) {
+      assert.ok(!completions(prefix).includes('#Missing'), prefix);
+    }
+    assert.ok(!completions('Numerical x = EQ(Age, ', 'Dictionary Main\n').includes('#Missing')); // outside a block
+  }],
+  ['typing # offers only #Missing, which replaces what was typed', () => {
+    for (const typed of ['#', '#M', '#Mis']) {
+      const prefix = `Numerical x = EQ(Age, ${typed}`;
+      const items = completionItems(prefix);
+      assert.deepStrictEqual(items.map(item => item.label), ['#Missing'], prefix);
+      assert.strictEqual(items[0].range.start.character, prefix.length - typed.length, prefix);
+      assert.strictEqual(items[0].range.end.character, prefix.length, prefix);
+    }
+  }],
+  ['typing # where #Missing is not possible offers nothing', () => {
+    assert.deepStrictEqual(completions('Categorical c = Concat("a", #'), []);
+    assert.deepStrictEqual(completions('Numerical x = #'), []);
+    assert.deepStrictEqual(completions('#Khiops', ''), []); // the header line of a file
+    assert.deepStrictEqual(completions('#', ''), []);
   }],
   ['top level', () => assert.deepStrictEqual(completions('', ''), ['Dictionary', 'Root', 'Unused'])],
   ['relation target', () => {

@@ -3,13 +3,18 @@
  */
 import * as vscode from 'vscode';
 import {
-  analyzeCompletionPrefix, declaredTypeOnLine, isAfterRelationalTypeParens, isInMetadataKey, isInsideDictionaryBlock,
+  analyzeCompletionPrefix, declaredTypeOnLine, expectedOperandType, hashWordBeforeCursor, isAfterRelationalTypeParens,
+  isInMetadataKey, isInsideDictionaryBlock,
 } from './completion-context';
 import { DERIVATION_RULES, type DerivationRule } from './derivation-rules';
 import { extractDictionaryNames, FORMAT_METADATA_KEYS } from './kdic-syntax';
-import { ADVANCED_TYPES, KEYWORDS, METADATA_KEYS, NATIVE_TYPES, type LanguageEntry } from './language-data';
+import { buildRuleMaps } from './rule-maps';
+import {
+  ADVANCED_TYPES, KEYWORDS, METADATA_KEYS, MISSING_VALUE, NATIVE_TYPES, type LanguageEntry,
+} from './language-data';
 
 const UNUSED_KEYWORD = KEYWORDS.find(keyword => keyword.label === 'Unused')!;
+const RULE_PARAMETER_TYPES = buildRuleMaps(DERIVATION_RULES).paramTypes;
 
 /** Builds a completion item that shows the entry's documentation and, if any, expands to its snippet. */
 function entryItem(entry: LanguageEntry, kind: vscode.CompletionItemKind): vscode.CompletionItem {
@@ -44,6 +49,13 @@ function metadataKeyItems(linePrefix: string): vscode.CompletionItem[] {
   });
 }
 
+/** `#Missing`, replacing the `#word` already typed before the cursor, if any (`#` is not part of a word). */
+function missingValueItem(position: vscode.Position, typed: string): vscode.CompletionItem {
+  const item = entryItem(MISSING_VALUE, vscode.CompletionItemKind.Constant);
+  if (typed) { item.range = new vscode.Range(new vscode.Position(position.line, position.character - typed.length), position); }
+  return item;
+}
+
 /** What to suggest at `position`, depending on where in the file the cursor is. */
 function provideCompletionItems(document: vscode.TextDocument, position: vscode.Position): vscode.CompletionItem[] {
   const linePrefix = document.lineAt(position).text.substring(0, position.character);
@@ -66,6 +78,11 @@ function provideCompletionItems(document: vscode.TextDocument, position: vscode.
   // On the key of a metadata tag: the format keys, which only variables of a dictionary can carry.
   if (isInMetadataKey(linePrefix)) { return insideDictionary ? metadataKeyItems(linePrefix) : []; }
 
+  // Where a rule expects a Numerical operand, `#Missing` is possible. Once `#` is typed, nothing else is.
+  const missingAllowed = insideDictionary && expectedOperandType(textBeforeCursor, RULE_PARAMETER_TYPES) === 'Numerical';
+  const hashWord = hashWordBeforeCursor(linePrefix);
+  if (hashWord !== undefined) { return missingAllowed ? [missingValueItem(position, hashWord)] : []; }
+
   // Outside any dictionary: the keywords that start one.
   if (!insideDictionary) {
     return KEYWORDS.map(keyword => entryItem(keyword, vscode.CompletionItemKind.Keyword));
@@ -81,6 +98,7 @@ function provideCompletionItems(document: vscode.TextDocument, position: vscode.
   }
   // Rules are always offered: after `=`, and when naming a rule on a derived variable's line.
   items.push(...DERIVATION_RULES.map(ruleItem));
+  if (missingAllowed) { items.push(missingValueItem(position, '')); }
   return items;
 }
 
@@ -101,7 +119,7 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): void
     vscode.languages.registerCompletionItemProvider(
       { language: 'kdic' },
       { provideCompletionItems },
-      '(', ' ', '\t', '<', // trigger characters
+      '(', ' ', '\t', '<', '#', // trigger characters
     ),
     vscode.languages.registerHoverProvider({ language: 'kdic' }, {
       provideHover(document, position) {

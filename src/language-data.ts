@@ -1,5 +1,5 @@
 /**
- * Completion and hover data for the KDIC keywords, variable types and metadata keys.
+ * Completion and hover data for the KDIC keywords, variable types, metadata keys and the missing value.
  * (Derivation rules live in derivation-rules.ts.)
  *
  * Free of any VS Code dependency. To add a type, also add it to `KDIC_TYPES`
@@ -119,3 +119,11 @@ export const METADATA_KEYS: LanguageEntry[] = Object.entries(FORMAT_METADATA_KEY
     + `Written after the \`;\` of the variable; Khiops rejects it on any other type.`,
   insertText: `${key}="\${1:${FORMAT_EXAMPLES[type]}}"`,
 }));
+
+/** The missing numerical value, offered where a rule expects a Numerical operand. */
+export const MISSING_VALUE: LanguageEntry = {
+  label: '#Missing',
+  detail: 'numerical constant',
+  documentation: 'The missing numerical value. It can be used as a numerical operand of any derivation rule, '
+    + 'as in `EQ(Age, #Missing)`. In comparisons, it is inferior to any valid value.',
+};

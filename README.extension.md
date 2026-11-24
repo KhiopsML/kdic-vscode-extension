@@ -9,7 +9,7 @@ Edit `.kdic` files with syntax highlighting and receive diagnostics directly in 
 ## Features
 
 - Syntax highlighting for dictionary declarations, types, derivations, metadata, comments, strings, and numbers
-- Completions for keywords, types, dictionary names, derivation rules, and date and time format metadata keys
+- Completions for keywords, types, dictionary names, derivation rules, `#Missing` for numerical operands, and date and time format metadata keys
 - Hover documentation for keywords, types, and derivation rules
 - Snippets for common dictionary declarations and table relationships
 - Built-in diagnostics for common structural and type errors

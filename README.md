@@ -31,6 +31,7 @@ Context-aware completions:
 | After `=` (derivation)      | All derivation rule functions with signatures and documentation              |
 | After `Entity(` or `Table(` | Dictionary names declared in the current file                                |
 | After `<` (metadata key)    | `DateFormat`, `TimeFormat`, `TimestampFormat`, `TimestampTZFormat` — the key of the line's type first |
+| Numerical operand of a rule | `#Missing`, when the cursor follows `(` or `,` and the rule expects a `Numerical` there |
 
 **Covered rule categories**: Numerical/Categorical comparisons, Logical operators, Data conversion, Math, String, Date/Time/Timestamp/TimestampTZ, Table aggregation, Table management, Vector, Hash Map, Data preparation, Predictor (Classifier/Regressor), Interpretation, Reinforcement, Coclustering, Sparse blocks (CopyBlock, GetBlock), Text sparse (TextWords, TextNgrams, TextTokens, …), Preparation sparse (DataGridBlock, DataGridStatsBlock, DataGridCellBlock), Table partition (Partition, TablePartition, TablePartitionCount, …), Table block (TableBlockMean, TableBlockEntropy, …).
 

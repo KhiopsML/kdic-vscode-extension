@@ -61,6 +61,16 @@ The extension SHALL offer completion items according to the current document pos
 
 The provider is also triggered by typing `<`.
 
+#### Scenario: Missing value
+- **WHEN** completion is requested inside a block, outside comments and quoted text, where an operand starts (right after `(` or `,`, also on a following line) in a call of a known rule whose parameter at that position is `Numerical`, a trailing `...` repeating the parameter before it
+- **THEN** the provider also offers `#Missing`
+- **WHEN** the position expects another type, is not the start of an operand, is outside any call, or the rule is unknown
+- **THEN** `#Missing` is not offered
+- **WHEN** the user has typed `#` or the start of `#Missing`
+- **THEN** only `#Missing` is offered where it is possible, replacing what was typed, and nothing otherwise, including on a `#Khiops` header line
+
+`#Missing` is not offered as the whole derivation of a variable, which Khiops rejects. The provider is also triggered by typing `#`.
+
 ### Requirement: Hover documentation
 The extension SHALL show documentation for recognized keywords, types, and registered derivation-rule names.
 

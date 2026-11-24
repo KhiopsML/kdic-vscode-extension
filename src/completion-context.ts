@@ -4,11 +4,16 @@
  * Free of any VS Code dependency: functions take the text before the cursor.
  */
 import { METADATA_PATTERN, TYPE_ALTERNATION, maskQuoted, stripLineComments } from './kdic-syntax';
+import { parameterTypeAt } from './rule-maps';
 
 /** A complete metadata tag at the start of a string. */
 const METADATA_AT_START = new RegExp(`^${METADATA_PATTERN}`);
 /** A `<` followed by the start of a key, at the end of a string. */
 const METADATA_KEY_AT_END = /<(?:[A-Za-z_][A-Za-z0-9_]*)?$/;
+/** A `#` followed by letters, at the end of a string: the start of `#Missing`. */
+const HASH_WORD_AT_END = /#[A-Za-z]*$/;
+/** The operand being typed (`Age`, `#Mis`), which is not part of the context that precedes it. */
+const PARTIAL_OPERAND_AT_END = /#?[A-Za-z0-9_]*$/;
 /** The type that starts a declaration line, after an optional `Unused`. */
 const DECLARATION_TYPE = new RegExp(`^\\s*(?:Unused\\s+)?(${TYPE_ALTERNATION})\\b`);
 
@@ -54,6 +59,73 @@ export function analyzeCompletionPrefix(prefix: string): { inComment: boolean; i
  */
 export function isInMetadataKey(linePrefix: string): boolean {
   return METADATA_KEY_AT_END.test(maskQuoted(stripLineComments(linePrefix), true));
+}
+
+/** The partly typed `#word` that ends the line prefix (`#`, `#Mis`), outside quotes and comments. */
+export function hashWordBeforeCursor(linePrefix: string): string | undefined {
+  return HASH_WORD_AT_END.exec(maskQuoted(stripLineComments(linePrefix), true))?.[0];
+}
+
+/** What a scan of derivation text learns about the rule calls still open at its end. */
+interface CallScan {
+  /** The rule calls whose `(` is not closed, innermost last, with the position of the argument being written. */
+  calls: Array<{ rule: string | undefined; argument: number }>;
+  inQuote: boolean;
+  /** Whether the last significant character is `(` or `,`, which an operand follows. */
+  atOperandStart: boolean;
+}
+
+/**
+ * Walks the text once, tracking the open rule calls. Quotes and comments are skipped, and a quote
+ * never spans lines. A statement end (`;`, `{`, `}`) closes every call.
+ */
+function scanCalls(text: string): CallScan {
+  const calls: CallScan['calls'] = [];
+  let quote: string | undefined;
+  let word = '';
+  let previousWord: string | undefined; // the identifier just before, when only blanks follow it
+  let atOperandStart = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\n') { quote = undefined; }
+      else if (ch === quote) { if (text[i + 1] === quote) { i++; } else { quote = undefined; } }
+      continue;
+    }
+    if (/[A-Za-z0-9_]/.test(ch)) { word += ch; atOperandStart = false; continue; }
+    if (word) { previousWord = word; word = ''; }
+    if (/\s/.test(ch)) { continue; }
+
+    if ((ch === '/' && text[i + 1] === '/') || (ch === '#' && !text.startsWith('#Missing', i))) {
+      const end = text.indexOf('\n', i);
+      i = end === -1 ? text.length : end - 1; // a comment: neither the open calls nor the operand position change
+      continue;
+    }
+    if (ch === '(') { calls.push({ rule: previousWord, argument: 0 }); }
+    else if (ch === ')') { calls.pop(); }
+    else if (ch === ',') { if (calls.length > 0) { calls[calls.length - 1].argument++; } }
+    else if (ch === ';' || ch === '{' || ch === '}') { calls.length = 0; }
+    else if (ch === '"' || ch === '`') { quote = ch; }
+    atOperandStart = ch === '(' || ch === ',';
+    previousWord = undefined;
+  }
+  return { calls, inQuote: quote !== undefined, atOperandStart };
+}
+
+/**
+ * The type that the rule call enclosing the cursor expects for the operand about to be written,
+ * or undefined when the cursor is not where an operand starts (right after `(` or `,`), is in
+ * quoted text, or the rule is unknown. `paramTypes` is `RuleMaps.paramTypes`.
+ */
+export function expectedOperandType(
+  textBeforeCursor: string,
+  paramTypes: ReadonlyMap<string, readonly string[]>,
+): string | undefined {
+  const { calls, inQuote, atOperandStart } = scanCalls(textBeforeCursor.replace(PARTIAL_OPERAND_AT_END, ''));
+  const call = calls[calls.length - 1];
+  const types = call?.rule === undefined ? undefined : paramTypes.get(call.rule);
+  return inQuote || !atOperandStart || !call || !types ? undefined : parameterTypeAt(types, call.argument);
 }
 
 /** The variable type that starts the line (`Date` in `Unused Date d ;`), if any. */

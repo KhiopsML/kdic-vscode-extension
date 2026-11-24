@@ -1,5 +1,5 @@
 import type { DerivationRule, OperandScope } from './derivation-rules';
-import { TYPE_ALTERNATION } from './kdic-syntax';
+import { isKdicType, TYPE_ALTERNATION } from './kdic-syntax';
 
 /** Rule lookup tables the validator uses to type-check derivations. */
 export interface RuleMaps {
@@ -21,6 +21,18 @@ function parameterType(parameter: string): string {
   const match = TYPED_PARAMETER.exec(text);
   if (!match) { return 'any'; }
   return match[1] ? `Block(${match[1]})` : match[2];
+}
+
+/**
+ * The type a rule expects at `position` (zero-based). A trailing `...` repeats the parameter before it,
+ * but only for a rule whose parameters all have a concrete type: when one is `any` or a structure, the
+ * signature does not say what the extra operands are (`DataGridDeployment`).
+ */
+export function parameterTypeAt(types: readonly string[], position: number): string | undefined {
+  const varargs = types.indexOf('...');
+  if (varargs === -1 || position < varargs) { return types[position]; }
+  const concrete = types.every(type => type === '...' || (isKdicType(type) && type !== 'Structure'));
+  return concrete && varargs > 0 ? types[varargs - 1] : undefined;
 }
 
 /** Builds the validator's lookup tables from rule definitions; call it once at startup. */

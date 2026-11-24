@@ -30,6 +30,7 @@ Context-aware completions:
 | Inside a dictionary block   | All types (`Categorical`, `Numerical`, …), `Unused`, `Entity(…)`, `Table(…)` |
 | After `=` (derivation)      | All derivation rule functions with signatures and documentation              |
 | After `Entity(` or `Table(` | Dictionary names declared in the current file                                |
+| After `<` (metadata key)    | `DateFormat`, `TimeFormat`, `TimestampFormat`, `TimestampTZFormat` — the key of the line's type first |
 
 **Covered rule categories**: Numerical/Categorical comparisons, Logical operators, Data conversion, Math, String, Date/Time/Timestamp/TimestampTZ, Table aggregation, Table management, Vector, Hash Map, Data preparation, Predictor (Classifier/Regressor), Interpretation, Reinforcement, Coclustering, Sparse blocks (CopyBlock, GetBlock), Text sparse (TextWords, TextNgrams, TextTokens, …), Preparation sparse (DataGridBlock, DataGridStatsBlock, DataGridCellBlock), Table partition (Partition, TablePartition, TablePartitionCount, …), Table block (TableBlockMean, TableBlockEntropy, …).
 
@@ -57,6 +58,10 @@ Real-time diagnostics for simple derivation rule calls (non-nested arguments onl
 - **Derived key field**: fields listed in a dictionary's key must not be derived from a rule.
 - **Undeclared key field**: every dictionary key must refer to a declared variable.
 - **Name length**: dictionary and variable names are limited to 128 characters.
+- **Format metadata**: `DateFormat`, `TimeFormat`, `TimestampFormat` and `TimestampTZFormat` must follow a variable of their own type (`Date`, `Time`, `Timestamp`, `TimestampTZ`), be given a string value, and name one of the [formats Khiops documents](https://khiops.org/api-docs/kdic/date-rules/) (also [time](https://khiops.org/api-docs/kdic/time-rules/), [timestamp](https://khiops.org/api-docs/kdic/timestamp-rules/) and [timestamp with time zone](https://khiops.org/api-docs/kdic/timestamp-tz-rules/)).
+  > `Time t; <DateFormat="DD/MM/YYYY">` → error on `DateFormat` (it applies to `Date` variables)
+  > `Date d; <DateFormat=12>` → error on `12` (a string value is expected)
+  > `Date d; <DateFormat="yyyy-mm-dd">` → error on the string (not a Khiops date format)
 
 Argument checks use the current dictionary only when the operand's scope is known to be current. Secondary-scope operands and relational operands with unknown scope are not type-checked by the built-in validator; native Khiops validation remains authoritative.
 
@@ -110,22 +115,24 @@ Recognised structural patterns include:
 
 ### Snippets
 
-| Prefix        | Description                               |
-| ------------- | ----------------------------------------- |
-| `dict`        | Basic `Dictionary` block                  |
-| `rootdict`    | `Root Dictionary` block                   |
-| `cat`         | `Categorical` variable                    |
-| `num`         | `Numerical` variable                      |
-| `unused`      | `Unused` variable                         |
-| `derived`     | Derived variable with a rule              |
-| `entity`      | `Entity(...)` relation                    |
-| `table`       | `Table(...)` relation                     |
-| `datefmt`     | `Date` variable with format metadata      |
-| `tsfmt`       | `Timestamp` variable with format metadata |
-| `tabcount`    | `TableCount` derived variable             |
-| `tabmean`     | `TableMean` derived variable              |
-| `tabsel`      | `TableSelection` derived variable         |
-| `startschema` | Multi-table star schema template          |
+| Prefix        | Description                                 |
+| ------------- | ------------------------------------------- |
+| `dict`        | Basic `Dictionary` block                    |
+| `rootdict`    | `Root Dictionary` block                     |
+| `cat`         | `Categorical` variable                      |
+| `num`         | `Numerical` variable                        |
+| `unused`      | `Unused` variable                           |
+| `derived`     | Derived variable with a rule                |
+| `entity`      | `Entity(...)` relation                      |
+| `table`       | `Table(...)` relation                       |
+| `datefmt`     | `Date` variable with format metadata        |
+| `timefmt`     | `Time` variable with format metadata        |
+| `tsfmt`       | `Timestamp` variable with format metadata   |
+| `tstzfmt`     | `TimestampTZ` variable with format metadata |
+| `tabcount`    | `TableCount` derived variable               |
+| `tabmean`     | `TableMean` derived variable                |
+| `tabsel`      | `TableSelection` derived variable           |
+| `startschema` | Multi-table star schema template            |
 
 ### Language Configuration
 

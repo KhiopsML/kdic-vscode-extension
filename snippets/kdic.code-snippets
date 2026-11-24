@@ -89,6 +89,22 @@
         ],
         "description": "Declare a Timestamp variable with format metadata"
     },
+    "Time metadata": {
+        "prefix": "timefmt",
+        "scope": "kdic",
+        "body": [
+            "Time\t${1:varName}\t; <TimeFormat=\"${2:HH.MM}\">$0"
+        ],
+        "description": "Declare a Time variable with format metadata"
+    },
+    "TimestampTZ metadata": {
+        "prefix": "tstzfmt",
+        "scope": "kdic",
+        "body": [
+            "TimestampTZ\t${1:varName}\t; <TimestampTZFormat=\"${2:YYYY-MM-DD_HH:MM:SS.zzzzz}\">$0"
+        ],
+        "description": "Declare a TimestampTZ variable with format metadata"
+    },
     "Table count derived": {
         "prefix": "tabcount",
         "scope": "kdic",

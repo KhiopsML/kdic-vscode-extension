@@ -29,6 +29,14 @@ export const IDENTIFIER_PATTERN = '(?:`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)';
 /** Regex source of one metadata tag: `<key>`, `<key=1.5>` or `<key="text">`. */
 export const METADATA_PATTERN = '<[A-Za-z_][A-Za-z0-9_]*(?:=(?:"[^"]*(?:""[^"]*)*"|[^"<>\\s]*))?>';
 
+/** The metadata key that gives the external format of each date or time type. Khiops accepts it on that type only. */
+export const FORMAT_METADATA_KEYS: Readonly<Record<string, string>> = {
+  Date: 'DateFormat',
+  Time: 'TimeFormat',
+  Timestamp: 'TimestampFormat',
+  TimestampTZ: 'TimestampTZFormat',
+};
+
 /** Returns the name denoted by an identifier: backticks removed and `` `` `` unescaped. */
 export function decodeIdentifier(raw: string): string {
   return raw.startsWith('`') ? raw.slice(1, -1).replace(/``/g, '`') : raw;

@@ -3,10 +3,14 @@
  *
  * Free of any VS Code dependency: functions take the text before the cursor.
  */
-import { METADATA_PATTERN, maskQuoted, stripLineComments } from './kdic-syntax';
+import { METADATA_PATTERN, TYPE_ALTERNATION, maskQuoted, stripLineComments } from './kdic-syntax';
 
 /** A complete metadata tag at the start of a string. */
 const METADATA_AT_START = new RegExp(`^${METADATA_PATTERN}`);
+/** A `<` followed by the start of a key, at the end of a string. */
+const METADATA_KEY_AT_END = /<(?:[A-Za-z_][A-Za-z0-9_]*)?$/;
+/** The type that starts a declaration line, after an optional `Unused`. */
+const DECLARATION_TYPE = new RegExp(`^\\s*(?:Unused\\s+)?(${TYPE_ALTERNATION})\\b`);
 
 /**
  * Analyzes the text of the current line before the cursor.
@@ -42,6 +46,19 @@ export function analyzeCompletionPrefix(prefix: string): { inComment: boolean; i
     }
   }
   return { inComment: false, inDerivation };
+}
+
+/**
+ * Whether the cursor is on the key of a metadata tag being typed (`<`, `<Dat`).
+ * A `<` in a comment or in quoted text does not start a tag.
+ */
+export function isInMetadataKey(linePrefix: string): boolean {
+  return METADATA_KEY_AT_END.test(maskQuoted(stripLineComments(linePrefix), true));
+}
+
+/** The variable type that starts the line (`Date` in `Unused Date d ;`), if any. */
+export function declaredTypeOnLine(linePrefix: string): string | undefined {
+  return DECLARATION_TYPE.exec(linePrefix)?.[1];
 }
 
 /** Whether the cursor, which follows `textBeforeCursor`, is inside a dictionary's `{ … }`. */

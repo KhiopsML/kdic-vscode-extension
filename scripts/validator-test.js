@@ -3,6 +3,7 @@
 'use strict';
 
 const assert = require('assert');
+const fs = require('fs');
 const path = require('path');
 
 const validator = require(path.join(__dirname, '..', 'out', 'validator.js'));
@@ -10,6 +11,9 @@ const { buildRuleMaps } = require(path.join(__dirname, '..', 'out', 'rule-maps.j
 const { stripLineComments, extractDictionaryNames } = require(path.join(__dirname, '..', 'out', 'kdic-syntax.js'));
 const { tokenizeKdic } = require(path.join(__dirname, '..', 'out', 'kdic-lexer.js'));
 const { KdicTextDocument } = require(path.join(__dirname, '..', 'out', 'kdic-text-document.js'));
+const { formatsOf, isValidFormat } = require(path.join(__dirname, '..', 'out', 'date-time-formats.js'));
+const { FORMAT_METADATA_KEYS } = require(path.join(__dirname, '..', 'out', 'kdic-syntax.js'));
+const { METADATA_KEYS } = require(path.join(__dirname, '..', 'out', 'language-data.js'));
 
 function createDocument(text) {
   return new KdicTextDocument(text.replace(/\r\n/g, '\n'));
@@ -320,6 +324,109 @@ function testMetadataSyntax() {
   }
 }
 
+function testFormatMetadata() {
+  const document = declarations => `Dictionary Records\n{\n    ${declarations}\n};`;
+  const messages = declarations => diagnosticsFor(document(declarations)).map(diagnostic => diagnostic.message);
+
+  for (const declarations of [
+    'Date d; <DateFormat="DD/MM/YYYY">',
+    'Time t; <TimeFormat="HH.MM">',
+    'Timestamp s; <TimestampFormat="YYYY-MM-DD_HH:MM:SS">',
+    'TimestampTZ z; <TimestampTZFormat="YYYY-MM-DD_HH:MM:SS.zzzzz">',
+    'Unused Date d; <DateFormat="DD/MM/YYYY">',
+    'Date d; <Flag> <DateFormat="DD/MM/YYYY"> <Number=1>',
+    'Date d; // the format follows\n    <DateFormat="DD/MM/YYYY">',
+    'Date d; <DateFormat="DD/MM/YYYY"> Time t; <TimeFormat="HH.MM">',
+    'Date d; <dateformat=1> <Other="x">', // only the exact format keys are checked
+    'Categorical c; <Flag> <Number=1>',
+  ]) {
+    assertNoDiagnostics(`format metadata ${declarations}`, document(declarations));
+  }
+
+  const wrongType = (declarations, key, expected, actual) => {
+    assertDiagnostic(`${key} on ${actual}`, document(declarations),
+      `Meta-data '${key}' only applies to '${expected}' variables, not '${actual}'`);
+  };
+  wrongType('Time t; <DateFormat="DD/MM/YYYY">', 'DateFormat', 'Date', 'Time');
+  wrongType('Timestamp s; <TimestampTZFormat="YYYY-MM-DD">', 'TimestampTZFormat', 'TimestampTZ', 'Timestamp');
+  wrongType('Categorical c; <TimestampFormat="YYYY-MM-DD">', 'TimestampFormat', 'Timestamp', 'Categorical');
+  wrongType('Numerical n; <Flag> <TimeFormat="HH.MM">', 'TimeFormat', 'Time', 'Numerical');
+  wrongType('Date d; Time t; <DateFormat="DD/MM/YYYY">', 'DateFormat', 'Date', 'Time'); // the tag belongs to `t`
+
+  for (const value of ['<DateFormat>', '<DateFormat=12>']) {
+    assertDiagnostic(`non-string ${value}`, document(`Date d; ${value}`), "Meta-data 'DateFormat' needs a string value");
+  }
+
+  // The diagnostic covers the key, or the value when the key is right but the value is not.
+  const [wrongKey] = diagnosticsFor(document('Time t; <DateFormat="x">'));
+  assert.strictEqual(wrongKey.col, '    Time t; <'.length);
+  assert.strictEqual(wrongKey.endCol - wrongKey.col, 'DateFormat'.length);
+  const [wrongValue] = diagnosticsFor(document('Date d; <DateFormat=12>'));
+  assert.strictEqual(wrongValue.col, '    Date d; <DateFormat='.length);
+  assert.strictEqual(wrongValue.endCol - wrongValue.col, '12'.length);
+
+  // A malformed tag is reported as such, and nothing more.
+  assert.deepStrictEqual(messages('Time t; <DateFormat=abc>'), ['Invalid or unclosed metadata.']);
+}
+
+function testFormatStrings() {
+  const document = (type, key, value) => `Dictionary Records\n{\n    ${type} v; <${key}=${value}>\n};`;
+
+  // The documented lists: 16 date formats and 15 time formats.
+  assert.strictEqual(formatsOf('Date').size, 16);
+  assert.strictEqual(formatsOf('Time').size, 15);
+
+  // Each of these is accepted, or rejected, by native Khiops as well.
+  const valid = {
+    Date: ['YYYY-MM-DD', 'DD/MM/YYYY', 'YYYY.DD.MM', 'MMDDYYYY'],
+    Time: ['HH:MM:SS', 'HH:MM:SS.', '(H)H.(M)M', 'HHMM', 'HHMMSS.'],
+    Timestamp: ['YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DDTHH:MM:SS.', 'YYYY-MM-DD_HH:MM:SS', 'MM/DD/YYYY-(H)H.(M)M', 'YYYYMMDDHHMMSS', 'YYYYMMDDHHMM'],
+    TimestampTZ: ['YYYY-MM-DD HH:MM:SSzzzzzz', 'YYYY-MM-DD_HH:MM:SS.zzzzz', 'YYYYMMDDHHMMSS.zzzzzz'],
+  };
+  const invalid = {
+    Date: ['', 'garbage', 'yyyy-mm-dd', 'YYYY-M-D', 'YY-MM-DD', 'YYYY_MM_DD', 'YYYY-MM/DD', 'YYYY-MM-DD '],
+    Time: ['', 'HH', 'HH:MM:SS.SSS', 'H:M:S', 'HH:(M)M', '(H)H:MM:SS', 'hh:mm:ss', 'SS:MM:HH', 'HH-MM-SS'],
+    Timestamp: ['YYYY-MM-DD', 'HH:MM:SS', 'YYYY-MM-DDHH:MM:SS', 'YYYYMMDDHH:MM:SS', 'YYYY-MM-DD  HH:MM:SS', 'YYYY-MM-DD:HH:MM:SS', 'HH:MM:SS YYYY-MM-DD'],
+    TimestampTZ: ['YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD HH:MM:SSz', 'YYYY-MM-DD HH:MM:SSzzzz', 'YYYY-MM-DD HH:MM:SSzzzzzzz', 'YYYY-MM-DD HH:MM:SS zzzzz', 'YYYY-MM-DD HH:MM:SSZZZZZ'],
+  };
+  for (const [type, key] of Object.entries(FORMAT_METADATA_KEYS)) {
+    for (const format of valid[type]) {
+      assert.ok(isValidFormat(type, format), `${type} format ${format}`);
+      assertNoDiagnostics(`${key} ${format}`, document(type, key, `"${format}"`));
+    }
+    for (const format of invalid[type]) {
+      assert.ok(!isValidFormat(type, format), `${type} format ${JSON.stringify(format)}`);
+      assertDiagnostic(`${key} ${format}`, document(type, key, `"${format}"`), `Invalid ${type} format '${format}' in meta-data '${key}'`);
+    }
+  }
+  // A format of another type is not valid either.
+  assert.ok(!isValidFormat('Date', 'HH:MM:SS') && !isValidFormat('Time', 'YYYY-MM-DD'));
+
+  // The diagnostic covers the string, quotes included, and points to the list of formats.
+  const [found] = diagnosticsFor(document('Date', 'DateFormat', '"garbage"'));
+  assert.strictEqual(found.col, '    Date v; <DateFormat='.length);
+  assert.strictEqual(found.endCol - found.col, '"garbage"'.length);
+  assert.ok(found.message.endsWith('https://khiops.org/api-docs/kdic/date-rules/'), found.message);
+  assertDiagnostic('escaped quote', document('Date', 'DateFormat', '"a""b"'), `Invalid Date format 'a"b'`);
+}
+
+// The example formats offered by the snippets and by the metadata key completion must be valid.
+function testFormatExamples() {
+  const snippets = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'snippets', 'kdic.code-snippets'), 'utf8'));
+  const expand = body => body.replace(/\$\{\d+:([^}]*)\}/g, '$1').replace(/\$0/g, '');
+  const formatSnippets = Object.values(snippets).flatMap(snippet => snippet.body).filter(body => body.includes('Format='));
+  assert.strictEqual(formatSnippets.length, 4);
+  for (const body of formatSnippets) {
+    assertNoDiagnostics(`snippet ${body}`, `Dictionary Records\n{\n    ${expand(body)}\n};`);
+  }
+
+  const typeOf = Object.fromEntries(Object.entries(FORMAT_METADATA_KEYS).map(([type, key]) => [key, type]));
+  assert.strictEqual(METADATA_KEYS.length, 4);
+  for (const { label, insertText } of METADATA_KEYS) {
+    assertNoDiagnostics(`completion ${label}`, `Dictionary Records\n{\n    ${typeOf[label]} v; <${expand(insertText)}>\n};`);
+  }
+}
+
 function testDictionaryKeysAndNames() {
   assertNoDiagnostics('quoted multiline key', 'Dictionary Records (\n `a,b`,\n `a``b`\n)\n{\n Categorical `a,b`;\n Categorical `a``b`;\n};');
   assertNoDiagnostics('quoted parenthesis in key', 'Dictionary Records (`a)b`)\n{\n Categorical `a)b`;\n};');
@@ -406,6 +513,9 @@ function run() {
   testMultilineDerivation();
   testDeclarationTerminators();
   testMetadataSyntax();
+  testFormatMetadata();
+  testFormatStrings();
+  testFormatExamples();
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();

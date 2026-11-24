@@ -9,7 +9,7 @@ Edit `.kdic` files with syntax highlighting and receive diagnostics directly in 
 ## Features
 
 - Syntax highlighting for dictionary declarations, types, derivations, metadata, comments, strings, and numbers
-- Completions for keywords, types, dictionary names, and derivation rules
+- Completions for keywords, types, dictionary names, derivation rules, and date and time format metadata keys
 - Hover documentation for keywords, types, and derivation rules
 - Snippets for common dictionary declarations and table relationships
 - Built-in diagnostics for common structural and type errors
@@ -78,6 +78,7 @@ The built-in validator checks common problems while you edit, including:
 - Undeclared derivation arguments
 - Invalid derived key fields
 - Dictionary and variable names longer than 128 characters
+- Date and time format metadata (`DateFormat`, `TimeFormat`, `TimestampFormat`, `TimestampTZFormat`) on a variable of another type, without a string value, or with a format Khiops does not know
 
 Built-in validation is intentionally structural and best-effort. Argument checks use the current dictionary only for operands known to have current scope; secondary-scope operands and relational operands with unknown scope are not type-checked. The native Khiops parser remains authoritative for nested derivations, secondary-table scopes, joins, and complex block contents.
 

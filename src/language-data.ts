@@ -1,10 +1,11 @@
 /**
- * Completion and hover data for the KDIC keywords and variable types.
+ * Completion and hover data for the KDIC keywords, variable types and metadata keys.
  * (Derivation rules live in derivation-rules.ts.)
  *
  * Free of any VS Code dependency. To add a type, also add it to `KDIC_TYPES`
  * in kdic-syntax.ts, at the position that keeps longer names first.
  */
+import { FORMAT_METADATA_KEYS } from './kdic-syntax';
 
 export interface LanguageEntry {
   label: string;
@@ -101,3 +102,20 @@ export const ADVANCED_TYPES: LanguageEntry[] = [
     insertText: 'Structure(${1:name}) ${2:varName};',
   },
 ];
+
+/** An example format for each date or time type, offered as the value of its format key. */
+const FORMAT_EXAMPLES: Readonly<Record<string, string>> = {
+  Date: 'DD/MM/YYYY',
+  Time: 'HH.MM',
+  Timestamp: 'YYYY-MM-DD_HH:MM:SS',
+  TimestampTZ: 'YYYY-MM-DD_HH:MM:SS.zzzzz',
+};
+
+/** The metadata keys that set the external format of a date or time variable, one per type. */
+export const METADATA_KEYS: LanguageEntry[] = Object.entries(FORMAT_METADATA_KEYS).map(([type, key]) => ({
+  label: key,
+  detail: `metadata key · ${type}`,
+  documentation: `External format of a \`${type}\` variable, as a string: \`<${key}="${FORMAT_EXAMPLES[type]}">\`. `
+    + `Written after the \`;\` of the variable; Khiops rejects it on any other type.`,
+  insertText: `${key}="\${1:${FORMAT_EXAMPLES[type]}}"`,
+}));

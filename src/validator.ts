@@ -9,9 +9,10 @@
  *  1. delimiters      — unbalanced `() [] {}`                              (delimiters.ts)
  *  2. metadata        — `<key=value>` tags                                  (metadata.ts)
  *  3. structure       — dictionaries and declarations, missing `;`, names   (structure.ts)
- *  4. constants       — numerical and categorical constants in derivations  (constants.ts)
- *  5. dictionaries    — keys, relation targets, rule return/argument types  (dictionaries.ts)
- *  6. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
+ *  4. format metadata — `DateFormat` and co. on the wrong type, or a bad value (format-metadata.ts)
+ *  5. constants       — numerical and categorical constants in derivations  (constants.ts)
+ *  6. dictionaries    — keys, relation targets, rule return/argument types  (dictionaries.ts)
+ *  7. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
  */
 import { tokenizeKdic } from './kdic-lexer';
 import { extractDictionaryNames, stripLineComments } from './kdic-syntax';
@@ -20,6 +21,7 @@ import { checkConstants } from './validation/constants';
 import { checkDelimiters } from './validation/delimiters';
 import { DiagnosticCollector, type KdicDiagnostic, type KdicDocument } from './validation/diagnostics';
 import { checkDictionaries } from './validation/dictionaries';
+import { checkFormatMetadata } from './validation/format-metadata';
 import { checkLineGrammar } from './validation/line-grammar';
 import { scanMetadata } from './validation/metadata';
 import { scanStructure } from './validation/structure';
@@ -43,7 +45,9 @@ export function validate(document: KdicDocument, rules: RuleMaps, cursorLine?: n
   checkDelimiters(allTokens, out);
   const metadata = scanMetadata(tokens, out);
   const structure = scanStructure(tokens, metadata, out, cursorLine);
-  checkConstants(structure.dictionaries.flatMap(dictionary => dictionary.declarations), tokens, metadata, out);
+  const declarations = structure.dictionaries.flatMap(dictionary => dictionary.declarations);
+  checkFormatMetadata(declarations, tokens, metadata, out);
+  checkConstants(declarations, tokens, metadata, out);
 
   const headerLines = checkDictionaries(structure, tokens, extractDictionaryNames(text), rules, out);
   checkLineGrammar(stripLineComments(text), metadata, structure, headerLines, out);

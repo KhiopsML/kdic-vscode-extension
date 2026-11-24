@@ -1,6 +1,16 @@
 import type { KdicToken } from '../kdic-lexer';
 import type { DiagnosticCollector } from './diagnostics';
 
+/** A well-formed metadata tag: `<key>`, `<key=number>` or `<key="string">`. */
+export interface MetadataTag {
+  /** Indices, in the significant-token list, of the tag's `<` and of its last token. */
+  first: number;
+  last: number;
+  key: KdicToken;
+  /** The value, absent for `<key>`. */
+  value?: KdicToken;
+}
+
 /** Where the metadata tags (`<key>`, `<key=value>`) of a document are. */
 export interface MetadataInfo {
   /** Indices, in the significant-token list, of the tokens that belong to a tag. */
@@ -9,6 +19,8 @@ export interface MetadataInfo {
   ranges: Array<{ start: number; end: number }>;
   /** Lines touched by a tag. */
   lines: Set<number>;
+  /** The tags that are well-formed; malformed ones are reported by `scanMetadata` and left out. */
+  tags: MetadataTag[];
 }
 
 /** Tokens that can never be part of a tag: they end a malformed one. */
@@ -19,7 +31,7 @@ const TAG_TERMINATORS = ['>', '<', ';', '{', '}'];
  * A valid tag is `<key>`, `<key=number>` or `<key="string">`.
  */
 export function scanMetadata(tokens: readonly KdicToken[], out: DiagnosticCollector): MetadataInfo {
-  const info: MetadataInfo = { tokenIndices: new Set(), ranges: [], lines: new Set() };
+  const info: MetadataInfo = { tokenIndices: new Set(), ranges: [], lines: new Set(), tags: [] };
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
@@ -47,6 +59,8 @@ export function scanMetadata(tokens: readonly KdicToken[], out: DiagnosticCollec
     );
     if (!closed || !validKey || !validValue) {
       out.at(token.start, 1, 'Invalid or unclosed metadata.');
+    } else {
+      info.tags.push({ first: index, last: end, key: content[0], value: content[2] });
     }
 
     const last = closed ? end : end - 1;

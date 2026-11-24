@@ -78,6 +78,29 @@ The validator SHALL distinguish quoted text and comments from code when checking
 - **WHEN** metadata has unmatched angle brackets, an invalid key, an invalid numeric value, or an unclosed string
 - **THEN** the validator reports a metadata syntax error
 
+### Requirement: Date and time format metadata
+The validator SHALL check the metadata keys that give the external format of a date or time variable, as native Khiops does: `DateFormat` for `Date`, `TimeFormat` for `Time`, `TimestampFormat` for `Timestamp`, and `TimestampTZFormat` for `TimestampTZ`. The tags of a variable are those that follow the `;` ending its declaration, including on following lines. Key names are case-sensitive; other keys are not checked. The formats are those documented by Khiops: 16 date formats, 15 time formats, a date format and a time format joined by a space, `-`, `_` or `T` (or by nothing when neither has a separator) for timestamps, and a timestamp format followed by `zzzzz` or `zzzzzz` for timestamps with a time zone.
+
+#### Scenario: Format key on its own type
+- **WHEN** a variable is followed by its format key with a string value, alone or among other tags
+- **THEN** the validator reports nothing for that tag
+
+#### Scenario: Format key on another type
+- **WHEN** a format key follows a variable of another type
+- **THEN** the validator reports an error on the key, naming the type it applies to and the type of the variable
+
+#### Scenario: Format key without a string
+- **WHEN** a format key on a variable of its own type has no value or a numeric value
+- **THEN** the validator reports an error asking for a string value
+
+#### Scenario: Format that does not exist
+- **WHEN** a format key on a variable of its own type has a string that is not one of the formats of that type, including a format of another type
+- **THEN** the validator reports an error on the string, naming the format and the documentation page that lists the valid ones
+
+#### Scenario: Malformed tag
+- **WHEN** a tag is malformed
+- **THEN** only the metadata syntax error is reported for it
+
 ### Requirement: Keys, names, and relation references
 The validator SHALL validate key-field declarations and names, and check recognized relation targets.
 
@@ -210,3 +233,4 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled v
 - Cross-table scopes, nested derivation semantics, joins, and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
 - The `#Khiops` header line and dictionary metadata are accepted as structural patterns; their exact compatibility with native Khiops is not established.
 - A declaration the structure scan cannot recognize (for example junk before its type on the same line) is reported as an unknown line, and is not type-checked.
+- Native Khiops checks a date or time format only loosely (length, field positions and separators), so it accepts a few garbled variants of a time or timestamp format, such as `HH:MM:Ss` or `HH.MM ` with a trailing space. The built-in check reports every string outside the documented formats, so it can flag a format that Khiops would load.

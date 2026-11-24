@@ -51,6 +51,16 @@ The extension SHALL offer completion items according to the current document pos
 - **WHEN** it also contains an unquoted assignment outside that metadata
 - **THEN** the provider offers derivation rules rather than type and `Unused` entries
 
+#### Scenario: Metadata key
+- **WHEN** completion is requested inside a block right after an unquoted `<`, or after `<` and the start of a key, outside comments
+- **THEN** the provider offers `DateFormat`, `TimeFormat`, `TimestampFormat`, and `TimestampTZFormat`, each expanding to the key with a quoted example format
+- **WHEN** the line starts with a `Date`, `Time`, `Timestamp`, or `TimestampTZ` declaration, optionally after `Unused`
+- **THEN** the key of that type is listed first and preselected
+- **WHEN** the `<` is outside a block, or in a comment or quoted text
+- **THEN** no metadata key is offered
+
+The provider is also triggered by typing `<`.
+
 ### Requirement: Hover documentation
 The extension SHALL show documentation for recognized keywords, types, and registered derivation-rule names.
 
@@ -64,6 +74,10 @@ The extension SHALL contribute KDIC snippets and language editing configuration.
 #### Scenario: Dictionary snippet
 - **WHEN** the user expands the `dict` snippet in a KDIC document
 - **THEN** VS Code inserts a dictionary template with a variable and a closing `};`
+
+#### Scenario: Format snippets
+- **WHEN** the user expands `datefmt`, `timefmt`, `tsfmt`, or `tstzfmt`
+- **THEN** VS Code inserts a `Date`, `Time`, `Timestamp`, or `TimestampTZ` variable followed by its format key and an editable format
 
 #### Scenario: Comment and bracket support
 - **WHEN** VS Code applies the KDIC language configuration

@@ -16,11 +16,12 @@ the smoke-test CLI load directly from `out/`.
 | `src/carriage-returns.ts` | Detects files holding isolated `\r`, for which built-in diagnostics are off *(imports vscode)* |
 | `src/kdic-text-document.ts` | `KdicTextDocument`: plain text with a line index (`KdicDocument`; used by tests, the CLI and Khiops-output parsing) |
 | `src/derivation-rules.ts` | `DERIVATION_RULES`: ~300 built-in rules (completion, hover, type checking) |
-| `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES` (completion, hover) |
+| `src/date-time-formats.ts` | `formatsOf()`, `isValidFormat()`: the date, time, timestamp and timestamp-tz formats Khiops documents |
+| `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES`, `METADATA_KEYS` (completion, hover) |
 | `src/rule-maps.ts` | `buildRuleMaps()`: parameter-type, return-type and operand-scope maps built from the rules |
-| `src/kdic-syntax.ts` | `KDIC_TYPES`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
+| `src/kdic-syntax.ts` | `KDIC_TYPES`, `FORMAT_METADATA_KEYS`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
 | `src/kdic-lexer.ts` | `tokenizeKdic()`: tokens with offsets, comments and quote state |
-| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary?) |
+| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key?) |
 | `src/validator.ts` | `validate(document, rules, cursorLine?)`: runs the checks below, returns `KdicDiagnostic[]` |
 | `src/validation/*.ts` | The individual checks (below) |
 | `src/khiops-runner.ts` | Finds the Khiops binary and runs it on a dictionary file |
@@ -37,10 +38,12 @@ Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets a
 2. `metadata.ts` — locates `<key>`, `<key=value>` tags and reports malformed ones
 3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers and declarations);
    reports missing `;` and invalid variable names
-4. `constants.ts` — numerical and categorical constants inside derivations
-5. `dictionaries.ts` — per dictionary: name lengths, key fields, `Table(X)`/`Entity(X)` targets,
+4. `format-metadata.ts` — `DateFormat`/`TimeFormat`/`TimestampFormat`/`TimestampTZFormat` on a variable
+   of another type, without a string value, or with an unknown format
+5. `constants.ts` — numerical and categorical constants inside derivations
+6. `dictionaries.ts` — per dictionary: name lengths, key fields, `Table(X)`/`Entity(X)` targets,
    rule return types and argument types
-6. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
+7. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
 
 `diagnostics.ts` holds `KdicDocument`, `KdicDiagnostic`, `Severity` and the `DiagnosticCollector`
 the checks report to. All diagnostics are published with `source = 'kdic'`.

@@ -22,7 +22,7 @@ const vscode = {
   Position, Range, CompletionItem,
   MarkdownString: StringValue,
   SnippetString: StringValue,
-  CompletionItemKind: { Keyword: 0, TypeParameter: 1, Function: 2, Class: 3 },
+  CompletionItemKind: { Keyword: 0, TypeParameter: 1, Function: 2, Class: 3, Property: 4 },
   languages: {
     registerCompletionItemProvider: (_selector, provider) => { completionProvider = provider; return disposable; },
     registerHoverProvider: () => disposable,
@@ -38,7 +38,7 @@ try {
   Module._load = originalLoad;
 }
 
-function completions(prefix, before = 'Dictionary Main\n{\n', after = '\n};') {
+function completionItems(prefix, before = 'Dictionary Main\n{\n', after = '\n};') {
   const text = before + prefix + after;
   const lines = text.split('\n');
   const line = before.split('\n').length - 1;
@@ -47,7 +47,11 @@ function completions(prefix, before = 'Dictionary Main\n{\n', after = '\n};') {
     lineAt: pos => ({ text: lines[pos.line] }),
     getText: range => range ? text.slice(0, before.length + prefix.length) : text,
   };
-  return completionProvider.provideCompletionItems(document, position).map(item => item.label);
+  return completionProvider.provideCompletionItems(document, position);
+}
+
+function completions(...args) {
+  return completionItems(...args).map(item => item.label);
 }
 
 function normal(prefix) {
@@ -80,6 +84,29 @@ const tests = [
     assert.ok(labels.includes('TableCount'));
     assert.ok(!labels.includes('Numerical'));
     assert.ok(!labels.includes('Unused'));
+  }],
+  ['metadata keys', () => {
+    const keys = ['DateFormat', 'TimeFormat', 'TimestampFormat', 'TimestampTZFormat'];
+    for (const prefix of ['Categorical c ; <', 'Date d ; <Da', '<', 'Date d ; <A> <']) {
+      assert.deepStrictEqual(completions(prefix), keys, prefix);
+    }
+    assert.strictEqual(completionItems('Date d ; <')[0].insertText.value, 'DateFormat="${1:DD/MM/YYYY}"');
+  }],
+  ['metadata key of the declared type first', () => {
+    for (const [prefix, key] of [
+      ['Date d ; <', 'DateFormat'], ['Time t ; <', 'TimeFormat'], ['Unused Timestamp s ; <', 'TimestampFormat'],
+      ['TimestampTZ z ; <', 'TimestampTZFormat'],
+    ]) {
+      const items = completionItems(prefix);
+      assert.deepStrictEqual(items.filter(item => item.preselect).map(item => item.label), [key], prefix);
+      assert.strictEqual([...items].sort((a, b) => a.sortText.localeCompare(b.sortText))[0].label, key, prefix);
+    }
+    assert.ok(completionItems('<').every(item => !item.preselect));
+  }],
+  ['no metadata key in a comment, quoted text or outside a dictionary', () => {
+    assert.deepStrictEqual(completions('Date d ; // <'), []);
+    assert.ok(!completions('Categorical c = Concat("<').includes('DateFormat'));
+    assert.deepStrictEqual(completions('Dictionary D <', ''), []);
   }],
   ['top level', () => assert.deepStrictEqual(completions('', ''), ['Dictionary', 'Root', 'Unused'])],
   ['relation target', () => {

@@ -5,84 +5,62 @@ VS Code extension providing language support for `.kdic` files (Khiops dictionar
 
 ## Architecture
 
-Validation logic lives in `src/validator.ts` (no VS Code dependency).
-VS Code integration (completions, hover, diagnostics) lives in `src/extension.ts`.
-Syntax highlighting is declarative: `syntaxes/kdic.tmLanguage.json`.
-Snippets: `snippets/kdic.code-snippets`. Language config: `language-configuration.json`.
-Smoke test CLI: `scripts/smoke-test.js` (uses compiled `out/validator.js`).
+Only four modules import `vscode`; everything else is plain TypeScript that the unit tests and
+the smoke-test CLI load directly from `out/`.
 
-### `src/validator.ts` — shared validation module
-
-Exports all validation logic with no VS Code dependency, so it can be used by both
-`extension.ts` (inside VS Code) and `scripts/smoke-test.js` (standalone CLI).
-
-| Export | Purpose |
+| Module | Role |
 |---|---|
-| `KdicDocument` | Minimal document interface (satisfied by `vscode.TextDocument` and the smoke-test mock) |
-| `KdicDiagnostic` | Plain diagnostic object (line, col, endCol, severity, message) |
-| `Severity` | `Error = 0`, `Warning = 1` |
-| `KDIC_TYPES` | Ordered type list for regex alternation |
-| `stripLineComments(text)` | Quote/backtick-aware comment stripper (preserves offsets) |
-| `extractDictionaryNames(strippedText)` | Returns `Set<string>` of dictionary names |
-| `buildTypeMaps(rules)` | Builds parameter-type, return-type, and operand-scope maps from derivation rules |
-| `validate(doc, paramTypeMap, returnTypeMap, cursorLine?, paramScopeMap?)` | Full validation — returns `KdicDiagnostic[]` |
+| `src/extension.ts` | `activate()`: registers the language features and the diagnostics controller *(vscode)* |
+| `src/language-features.ts` | Completion and hover providers *(vscode)* |
+| `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save *(vscode)* |
+| `src/carriage-returns.ts` | Detects files holding isolated `\r`, for which built-in diagnostics are off *(imports vscode)* |
+| `src/kdic-text-document.ts` | `KdicTextDocument`: plain text with a line index (`KdicDocument`; used by tests, the CLI and Khiops-output parsing) |
+| `src/derivation-rules.ts` | `DERIVATION_RULES`: ~300 built-in rules (completion, hover, type checking) |
+| `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES` (completion, hover) |
+| `src/rule-maps.ts` | `buildRuleMaps()`: parameter-type, return-type and operand-scope maps built from the rules |
+| `src/kdic-syntax.ts` | `KDIC_TYPES`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
+| `src/kdic-lexer.ts` | `tokenizeKdic()`: tokens with offsets, comments and quote state |
+| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary?) |
+| `src/validator.ts` | `validate(document, rules, cursorLine?)`: runs the checks below, returns `KdicDiagnostic[]` |
+| `src/validation/*.ts` | The individual checks (below) |
+| `src/khiops-runner.ts` | Finds the Khiops binary and runs it on a dictionary file |
+| `src/khiops-validation.ts` | Turns Khiops output into `{ line, message }` locations |
 
-### `src/extension.ts` — VS Code integration
+Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets are in
+`snippets/kdic.code-snippets`; language configuration in `language-configuration.json`.
 
-| Constant | Purpose |
-|---|---|
-| `KEYWORDS` | Completion + hover for `Dictionary`, `Root`, `Unused` |
-| `NATIVE_TYPES`, `ADVANCED_TYPES` | Type completions |
-| `DERIVATION_RULES` | ~300 built-in functions — `signature` drives param-type map, `returnType` drives return-type map |
-| `PARAM_TYPE_MAP` / `RETURN_TYPE_MAP` / `PARAM_SCOPE_MAP` | Auto-derived from `DERIVATION_RULES` via `buildTypeMaps()` — **never edit manually** |
+### Built-in validation pipeline (`validator.ts`)
 
-`validateDocument()` is a thin wrapper: calls `validate()` from `validator.ts` and converts
-`KdicDiagnostic[]` to `vscode.Diagnostic[]` (`source: 'kdic'`).
+`validate()` tokenizes once, then runs these checks in order. Each is a focused function in `src/validation/`:
 
-`activate()` registers completion + hover, then configures diagnostics from:
-- built-in validator (`source: 'kdic'`) on open/change
-- optional native Khiops parser (`source: 'khiops'`) on save (and on auto-save when enabled) when binary is available
+1. `delimiters.ts` — unclosed / unmatched / wrongly nested `()`, `[]`, `{}`
+2. `metadata.ts` — locates `<key>`, `<key=value>` tags and reports malformed ones
+3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers and declarations);
+   reports missing `;` and invalid variable names
+4. `constants.ts` — numerical and categorical constants inside derivations
+5. `dictionaries.ts` — per dictionary: name lengths, key fields, `Table(X)`/`Entity(X)` targets,
+   rule return types and argument types
+6. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
 
-Native Khiops validation is controlled by settings:
-- `kdic.enableKhiopsValidation`
-- `kdic.diagnosticSource` (`khiops` | `extension` | `both`)
-- `kdic.runKhiopsOnAutoSave`
-- `kdic.enableDebugTraces`
-- `kdic.khiopsPath`
+`diagnostics.ts` holds `KdicDocument`, `KdicDiagnostic`, `Severity` and the `DiagnosticCollector`
+the checks report to. All diagnostics are published with `source = 'kdic'`.
 
-### `KDIC_TYPES` — order is significant
+### VS Code integration (`diagnostics-controller.ts`)
 
-```ts
-const KDIC_TYPES = [
-  'Categorical', 'Numerical', 'TextList', 'Text',
-  'Date', 'TimestampTZ', 'Timestamp', 'Time',
-  'Table', 'Entity', 'Structure',
-];
-```
+- Built-in diagnostics (collection `kdic`) are recomputed 300 ms after each edit, directly on the
+  editor document (`vscode.TextDocument` satisfies `KdicDocument`).
+- A file holding an isolated `\r` (not part of `\r\n`) gets **no** built-in diagnostics: VS Code
+  turns every `\r` into a line break, so the editor text no longer matches the file (a `\r` inside
+  quoted text is legal KDIC). `carriage-returns.ts` reads the file when the document opens, is saved,
+  or has its content replaced from disk; a save rewrites the file with ordinary line breaks, so
+  diagnostics then resume.
+- Native diagnostics (collection `khiops`, `source = 'khiops'`): after a save of a file-backed
+  document, once it has been checked and validated, and only if built-in validation found
+  no *error* (warnings do not block). Runs are serialized; the result of a run on an outdated
+  version is discarded.
+- If no Khiops binary is found, built-in diagnostics remain the fallback.
 
-Longer / more-specific names must come before shorter ones (`TimestampTZ` before `Timestamp`,
-`TextList` before `Text`). Used to build the `typeAlt` regex alternation used everywhere.
-Defined in `validator.ts`.
-
-### `validate()` — two independent passes
-
-**Pass 1 — block loop** (`while i < text.length`): finds each `{ … }` dictionary block,
-collects variable types into `vars`, then runs four checks:
-
-1. Key-field type check (fields listed in the dictionary key must be `Categorical`)
-2. Unknown-dictionary check (`Table(X)` / `Entity(X)` must reference a declared dictionary)
-3. Return-type mismatch (declared type vs. derivation rule return type)
-4. Argument-type mismatch (argument variables vs. `PARAM_TYPE_MAP`)
-5. Undeclared argument variable warning (likely typo in current dictionary scope)
-
-**Pass 2 — line loop** (`for li`): line-by-line grammar validation:
-
-- Check 1: non-metadata / non-comment content after `;`
-- Check 2: line matches `outsidePatterns` or `insidePatterns`
-- Check 3: missing `;` at end of a complete variable declaration
-- Check 4: missing `;` after dictionary closing `}`
-
-All diagnostics use `diag.source = 'kdic'`.
+Settings: `kdic.enableKhiopsValidation`, `kdic.runKhiopsOnAutoSave`, `kdic.enableDebugTraces`, `kdic.khiopsPath`.
 
 ## Build & run
 
@@ -93,19 +71,16 @@ npm run watch     # tsc -watch -p ./  (incremental)
 ```
 
 Press **F5** in VS Code to launch an Extension Development Host.
-Smoke test: `node scripts/smoke-test.js [directory]` (requires `npm run compile` first).
-Automated validator tests: `npm test`.
+Smoke test: `node scripts/smoke-test.js [--errors-only] [directory]` (requires `npm run compile`).
+Automated tests: `npm test`. VS Code host tests: see `README.md`.
 
 ## Key conventions
 
-- Adding a derivation rule: **append to `DERIVATION_RULES`** in `extension.ts` only — maps
-  rebuild automatically via `buildTypeMaps()`. Record documented relational operand scopes in
-  `operandScopes` using JSON-style double-quoted strings for the smoke-test CLI.
-- Adding a type: add to `NATIVE_TYPES` / `ADVANCED_TYPES` in `extension.ts` **and** insert at
-  the correct position in `KDIC_TYPES` in `validator.ts`.
-- Adding or changing validation logic: edit `src/validator.ts` — both the extension and the
-  smoke test will pick up the change after recompilation.
+- Adding a derivation rule: **append to `DERIVATION_RULES`** in `src/derivation-rules.ts` only.
+- Adding a type: add it to `NATIVE_TYPES` / `ADVANCED_TYPES` in `src/language-data.ts` **and** insert it
+  at the correct position in `KDIC_TYPES` in `src/kdic-syntax.ts` (longer names first).
+- Adding or changing validation: edit the matching file in `src/validation/`; the extension and the
+  smoke test pick it up after recompiling.
 - Diagnostic severity: **Error** for definite violations (type mismatch, missing `;`, unknown
   reference); **Warning** for unrecognised lines and undeclared argument-variable references.
-- Grammar patterns are regexes matched against the trimmed, comment-stripped line. Keep them
-  focused — one concern per pattern.
+- Keep modules free of `vscode` unless they need it, and every function short and commented.

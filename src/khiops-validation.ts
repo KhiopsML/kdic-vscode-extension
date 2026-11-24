@@ -1,187 +1,73 @@
-import { KDIC_TYPES, Severity, stripLineComments } from './validator';
+/**
+ * Turning the text printed by the native Khiops parser into editor locations.
+ *
+ * Free of any VS Code dependency.
+ */
+import { tokenName, tokenizeKdic } from './kdic-lexer';
+import { decodeIdentifier, IDENTIFIER_PATTERN } from './kdic-syntax';
+import { KdicTextDocument } from './kdic-text-document';
+import { DiagnosticCollector } from './validation/diagnostics';
+import { scanMetadata } from './validation/metadata';
+import { scanStructure } from './validation/structure';
 
 export interface KhiopsErrorLocation {
+  /** Zero-based line of the error in the dictionary file. */
   line: number;
   message: string;
 }
 
-const identifierPattern = '(`(?:[^`]|``)*`|[A-Za-z_][A-Za-z0-9_]*)';
+/** `error : … Line 7 : Missing ';'` — Khiops names the line itself. */
+const ERROR_WITH_LINE = /error\s*:\s*.*?Line\s+(\d+)\s*:\s*(.+)$/;
+/** Any other `error : message` line. */
+const ERROR = /error\s*:\s*(.+)$/;
+/** Summary lines that repeat errors already reported individually. */
+const SUMMARY = /Errors detected during parsing|Read cancelled/i;
 
-function decodeIdentifier(raw: string): string {
-  return raw.startsWith('`') ? raw.slice(1, -1).replace(/``/g, '`') : raw;
+/**
+ * Finds the line declaring `variableName` in dictionary `dictionaryName`.
+ * Returns undefined unless exactly one declaration matches.
+ */
+function findDeclarationLine(text: string, dictionaryName: string, variableName: string): number | undefined {
+  const document = new KdicTextDocument(text);
+  const ignored = new DiagnosticCollector(document); // only the structure is of interest here
+  const tokens = tokenizeKdic(text).filter(token => token.kind !== 'comment');
+  const structure = scanStructure(tokens, scanMetadata(tokens, ignored), ignored, undefined);
+
+  const matches = structure.dictionaries
+    .filter(dictionary => dictionary.header.name && tokenName(dictionary.header.name) === dictionaryName)
+    .flatMap(dictionary => dictionary.declarations)
+    .filter(declaration => declaration.nameText === variableName);
+  return matches.length === 1 ? document.positionAt(matches[0].start.start).line : undefined;
 }
 
-function isQuotedAt(text: string, position: number): boolean {
-  let inBackticks = false;
-  let inDoubleQuotes = false;
-  for (let index = 0; index < position; index++) {
-    const character = text[index];
-    if (inBackticks) {
-      if (character === '`') {
-        if (text[index + 1] === '`') { index++; }
-        else { inBackticks = false; }
-      }
-    } else if (inDoubleQuotes) {
-      if (character === '"') {
-        if (text[index + 1] === '"') { index++; }
-        else { inDoubleQuotes = false; }
-      }
-    } else if (character === '`') {
-      inBackticks = true;
-    } else if (character === '"') {
-      inDoubleQuotes = true;
-    }
-  }
-  return inBackticks || inDoubleQuotes;
+/**
+ * Locates an error that carries no line number but names its dictionary and
+ * variable (`Dictionary D : Variable v : …`) by finding that declaration.
+ */
+function locateByDeclaration(message: string, documentText: string): number | undefined {
+  const dictionary = new RegExp(`\\bDictionary\\s+(${IDENTIFIER_PATTERN})`, 'i').exec(message);
+  const variable = new RegExp(`\\bVariable\\s+(${IDENTIFIER_PATTERN})`, 'i').exec(message);
+  if (!dictionary || !variable) { return undefined; }
+  return findDeclarationLine(documentText, decodeIdentifier(dictionary[1]), decodeIdentifier(variable[1]));
 }
 
-function findOpeningBrace(text: string, start: number): number {
-  let inBackticks = false;
-  let inDoubleQuotes = false;
-  for (let index = start; index < text.length; index++) {
-    const character = text[index];
-    if (inBackticks) {
-      if (character === '`') {
-        if (text[index + 1] === '`') { index++; }
-        else { inBackticks = false; }
-      }
-    } else if (inDoubleQuotes) {
-      if (character === '"') {
-        if (text[index + 1] === '"') { index++; }
-        else { inDoubleQuotes = false; }
-      }
-    } else if (character === '`') {
-      inBackticks = true;
-    } else if (character === '"') {
-      inDoubleQuotes = true;
-    } else if (character === '{') {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function findClosingBrace(text: string, openingBrace: number): number {
-  let depth = 1;
-  let inBackticks = false;
-  let inDoubleQuotes = false;
-  for (let index = openingBrace + 1; index < text.length; index++) {
-    const character = text[index];
-    if (inBackticks) {
-      if (character === '`') {
-        if (text[index + 1] === '`') { index++; }
-        else { inBackticks = false; }
-      }
-    } else if (inDoubleQuotes) {
-      if (character === '"') {
-        if (text[index + 1] === '"') { index++; }
-        else { inDoubleQuotes = false; }
-      }
-    } else if (character === '`') {
-      inBackticks = true;
-    } else if (character === '"') {
-      inDoubleQuotes = true;
-    } else if (character === '{') {
-      depth++;
-    } else if (character === '}' && --depth === 0) {
-      return index;
-    }
-  }
-  return text.length;
-}
-
-function findVariableDeclarationLine(
-  documentText: string,
-  dictionaryName: string,
-  variableName: string,
-): number | undefined {
-  const text = stripLineComments(documentText);
-  const dictionaryPattern = new RegExp(`\\bDictionary\\s+${identifierPattern}`, 'g');
-  const typeAlt = KDIC_TYPES.join('|');
-  const variablePattern = new RegExp(
-    `(?:Unused\\s+)?(${typeAlt})(?:\\([^)]*\\))?\\s+${identifierPattern}(?:\\s*\\[[^\\]]*\\])?\\s*(?:=(?:"(?:[^"]|"")*"|[^;"])*)?;`,
-    'g',
-  );
-  const lines: number[] = [];
-
-  let dictionaryMatch: RegExpExecArray | null;
-  while ((dictionaryMatch = dictionaryPattern.exec(text)) !== null) {
-    if (isQuotedAt(text, dictionaryMatch.index)) { continue; }
-    const blockName = decodeIdentifier(dictionaryMatch[1]);
-    const openingBrace = findOpeningBrace(text, dictionaryPattern.lastIndex);
-    if (openingBrace === -1) { break; }
-    const closingBrace = findClosingBrace(text, openingBrace);
-    dictionaryPattern.lastIndex = closingBrace + 1;
-
-    if (blockName !== dictionaryName) { continue; }
-    const blockStart = openingBrace + 1;
-    const blockText = text.slice(blockStart, closingBrace);
-    variablePattern.lastIndex = 0;
-    let variableMatch: RegExpExecArray | null;
-    while ((variableMatch = variablePattern.exec(blockText)) !== null) {
-      if (decodeIdentifier(variableMatch[2]) !== variableName) { continue; }
-      lines.push(text.slice(0, blockStart + variableMatch.index).split('\n').length - 1);
-    }
-  }
-
-  return lines.length === 1 ? lines[0] : undefined;
-}
-
-function resolveErrorLine(message: string, documentText: string): number | undefined {
-  const lineMatch = /\bLine\s+(\d+)\s*:\s*(.*)$/i.exec(message);
-  if (lineMatch) { return Math.max(0, Number.parseInt(lineMatch[1], 10) - 1); }
-
-  const dictionaryMatch = new RegExp(`\\bDictionary\\s+${identifierPattern}`, 'i').exec(message);
-  const variableMatch = new RegExp(`\\bVariable\\s+${identifierPattern}`, 'i').exec(message);
-  if (!dictionaryMatch || !variableMatch) { return undefined; }
-  return findVariableDeclarationLine(
-    documentText,
-    decodeIdentifier(dictionaryMatch[1]),
-    decodeIdentifier(variableMatch[1]),
-  );
-}
-
-/** Parses native error lines and resolves each one to a source line when possible. */
+/**
+ * Extracts the errors from Khiops output and places each one on a line of the
+ * dictionary file: the line Khiops reports, else the declaration the message
+ * names, else the first line.
+ */
 export function parseKhiopsErrorLocations(output: string, documentText: string): KhiopsErrorLocation[] {
   const locations: KhiopsErrorLocation[] = [];
-  const reWithLine = /error\s*:\s*.*?Line\s+(\d+)\s*:\s*(.+)$/gm;
-  const reGeneral = /error\s*:\s*(.+)$/gm;
-  const matched = new Set<number>();
-  let match: RegExpExecArray | null;
+  for (const outputLine of output.split(/\r?\n/)) {
+    const withLine = ERROR_WITH_LINE.exec(outputLine);
+    if (withLine) {
+      locations.push({ line: Math.max(0, Number.parseInt(withLine[1], 10) - 1), message: withLine[2].trim() });
+      continue;
+    }
 
-  while ((match = reWithLine.exec(output)) !== null) {
-    matched.add(match.index);
-    locations.push({
-      line: resolveErrorLine(`Line ${match[1]} : ${match[2]}`, documentText) ?? 0,
-      message: match[2].trim(),
-    });
+    const message = ERROR.exec(outputLine)?.[1].trim();
+    if (!message || SUMMARY.test(message)) { continue; }
+    locations.push({ line: locateByDeclaration(message, documentText) ?? 0, message });
   }
-
-  while ((match = reGeneral.exec(output)) !== null) {
-    if (matched.has(match.index)) { continue; }
-    const message = match[1].trim();
-    if (/Errors detected during parsing|Read cancelled/i.test(message)) { continue; }
-    locations.push({
-      line: resolveErrorLine(message, documentText) ?? 0,
-      message,
-    });
-  }
-
   return locations;
-}
-
-/** Whether built-in diagnostics permit a native validation run. */
-export function shouldRunNativeValidation(
-  builtInDiagnostics: readonly { severity: number }[],
-): boolean {
-  return !builtInDiagnostics.some(diagnostic => diagnostic.severity === Severity.Error);
-}
-
-/** Whether a native result still belongs to the current, open document. */
-export function isNativeValidationCurrent(
-  runVersion: number,
-  currentVersion: number,
-  isClosed: boolean,
-): boolean {
-  return !isClosed && runVersion === currentVersion;
 }

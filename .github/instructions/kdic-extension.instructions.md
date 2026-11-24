@@ -1,113 +1,80 @@
 ---
-description: "Use when adding derivation rules, types, grammar patterns, diagnostic checks, completions, hover docs, or any other feature to the kdic VS Code extension. Covers exact patterns for src/extension.ts and src/validator.ts."
+description: "Use when adding derivation rules, types, grammar patterns, diagnostic checks, completions, hover docs, or any other feature to the kdic VS Code extension. Covers exact patterns for src/derivation-rules.ts, src/language-data.ts and src/validation/."
 applyTo: "src/**"
 ---
 
 # Extending the kdic Extension
 
+See `.github/copilot-instructions.md` for the module map. Only `extension.ts`, `language-features.ts`,
+`diagnostics-controller.ts` and `carriage-returns.ts` may import `vscode`.
+
 ## Adding a derivation rule
 
-Append one entry to `DERIVATION_RULES`. **No other changes are needed** — `PARAM_TYPE_MAP` and
-`RETURN_TYPE_MAP` rebuild automatically.
+Append one entry to `DERIVATION_RULES` in `src/derivation-rules.ts`. **No other change is needed** —
+`buildRuleMaps()` rebuilds the parameter-type, return-type and operand-scope maps.
 
 ```ts
-{
-  label: 'MyRule',
-  kind: vscode.CompletionItemKind.Function,
-  detail: 'category',                          // shown in completion list
-  returnType: 'Numerical',                     // drives return-type check
-  signature: 'MyRule(Numerical x, Categorical y)',  // drives param-type check
-  documentation: 'What MyRule does.',
-}
+{ label: 'MyRule', detail: 'category', returnType: 'Numerical', signature: 'MyRule(Numerical x, Categorical y)', documentation: 'What MyRule does.' },
 ```
 
-**Signature parsing rules:**
-- `TypeName argName` → param expected to be `TypeName`
-- bare `argName` (no recognised type prefix) → `'any'` (unchecked)
-- last param `...` → varargs; extra positions beyond the explicit list are unchecked
-- `Block(Type) argName` → parsed as `Block(Type)` (block arguments are not type-checked like scalar args)
-
-For documented relational operand scopes, add an `operandScopes` array to the rule using JSON-style double-quoted strings. The smoke-test CLI reads this metadata from the same rule entry. Later operands of a relational rule without a known scope are not checked against the current dictionary.
+- `detail` is the category shown in the completion list; `returnType` drives the return-type check
+  (`Numerical|Categorical` is a union, `any` is unchecked).
+- Signature parsing: `TypeName argName` → expected type; a bare `argName` → `any` (unchecked);
+  a last parameter `...` → varargs (extra positions unchecked); `Block(Type) argName` → block argument (not type-checked).
+- Relational rules (first parameter `Table`/`Entity`): operands after the first are treated as
+  secondary-scope and unchecked, unless the rule lists `operandScopes: ['current', 'secondary', …]`.
 
 ## Adding a type
 
-1. Add to `NATIVE_TYPES` or `ADVANCED_TYPES` in `extension.ts` (completion + hover).
-2. Insert into `KDIC_TYPES` in `validator.ts` at the **correct position** — longer/more-specific names must
-   precede shorter ones (`TimestampTZ` before `Timestamp`, `TextList` before `Text`).
-3. All regexes that use `typeAlt` pick up the new type automatically.
+1. Add it to `NATIVE_TYPES` or `ADVANCED_TYPES` in `src/language-data.ts` (completion + hover).
+2. Insert it in `KDIC_TYPES` in `src/kdic-syntax.ts` at the **correct position**: longer / more
+   specific names first (`TimestampTZ` before `Timestamp`, `TextList` before `Text`).
+3. Patterns built from `TYPE_ALTERNATION` pick it up automatically.
 
-## Adding a grammar pattern
+## Adding a line pattern (`src/validation/line-grammar.ts`)
 
-Patterns are tested against the **trimmed, comment-stripped** line content.
-All grammar patterns live in `src/validator.ts` inside the `validate()` function.
+Line patterns are tested against the **trimmed, comment-free** line. Add to `OUTSIDE_DICTIONARY` or
+`INSIDE_DICTIONARY`, building the regex from `IDENTIFIER_PATTERN` / `METADATA_PATTERN` / `TYPE_ALTERNATION`.
+Keep one concern per pattern.
 
-- **Outside a dictionary block** → add to `outsidePatterns`.
-- **Inside a dictionary block** → add to `insidePatterns`.
+## Adding a diagnostic check
 
-Keep each pattern focused on one concern.
+Pick the module by what the check needs:
 
-## Adding a diagnostic check in the block loop
-
-Insert code inside the `while (i < text.length)` loop in `src/validator.ts`
-**after** the `vars` Map is populated.
-
-| Variable | Meaning |
+| The check needs… | Add it to |
 |---|---|
-| `blockText` | Raw text of the block (line comments replaced by spaces) |
-| `blockStart` | Char offset in `document` of the first char after `{` |
-| `vars` | `Map<name, type>` of all declared variables in this block |
-| `knownDicts` | `Set<string>` of all dictionary names in the file |
-| `document.positionAt(blockStart + offset)` | Convert block offset → document position |
+| tokens only (delimiters, metadata, constants) | the matching file, or a new `src/validation/<name>.ts` |
+| dictionaries / declarations / header | `dictionaries.ts` (reads the `Structure` built by `structure.ts`) |
+| whole-line text | `line-grammar.ts` |
 
-Push diagnostics via `diags.push({ line, col, endCol, severity: Severity.Error, message })`.
+Then call it from `validate()` in `src/validator.ts`, in pipeline order. Report through the
+`DiagnosticCollector`: `out.atToken(token, message)`, `out.at(offset, length, message)` or
+`out.atLine(line, col, endCol, message)`; pass `Severity.Warning` as last argument for warnings.
 
-## Adding a diagnostic check in the line loop
+Useful pieces: `structure.dictionaries[i].declarations` (`type`, `name`, `nameText`, `relationTarget`,
+`equalsIndex`), `dictionary.header` (`name`, `keys`, `valid`), `tokenName(token)` to get a decoded name,
+`maskQuoted()` to search delimiters in code while ignoring quoted text.
 
-Insert inside the `for (let li …)` loop in `src/validator.ts`. Useful context variables:
-
-| Variable | Meaning |
-|---|---|
-| `effective` | Trimmed, comment-stripped line |
-| `strippedLine` | Comment-stripped line (original column offsets preserved) |
-| `lineRaw` | Original line text |
-| `depthBefore` | Brace depth before processing this line (`> 0` = inside a block) |
-| `lineDepth` | Brace depth after processing this line |
-| `parenDepth` | Unclosed `(` count from previous lines (`0` = not a continuation) |
-| `lineNetParens` | Net `(` minus `)` on this line (`0` = statement complete here) |
-| `prevLineEndsWithAssign` | Previous line ended with `=` (split derivation) |
-| `semiIdx` | Index of last unquoted `;` in `strippedLine` (`-1` if none) |
-
-**Continuation lines** (multi-line derivations) must be skipped: check
-`parenDepth === 0 && !prevLineEndsWithAssign` before firing any diagnostic.
+**Continuation lines** (multi-line derivations) must not be flagged as unknown: `line-grammar.ts` already
+skips them (`isContinuation`).
 
 ## Diagnostic severity convention
 
 | Situation | Severity |
 |---|---|
-| Type mismatch, missing `;`, unknown dictionary, bad key type | `Error` |
+| Type mismatch, missing `;`, unknown dictionary, bad key, bad name | `Error` |
 | Line not matching any known grammar pattern, undeclared argument variable | `Warning` |
 
-## Native Khiops diagnostics (extension.ts)
+## Native Khiops diagnostics
 
-When touching validation wiring in `src/extension.ts`, preserve the current split:
-
-- Built-in diagnostics: collection `kdic`, produced by `validateDocument`
-- Native diagnostics: collection `khiops`, produced by `runKhiopsValidation`
-
-Configuration keys controlling behavior:
-
-- `kdic.enableKhiopsValidation`
-- `kdic.runKhiopsOnAutoSave`
-- `kdic.enableDebugTraces`
-- `kdic.khiopsPath`
-
-If no binary is found, extension diagnostics must remain available as fallback.
+Wiring lives in `src/diagnostics-controller.ts`; process handling in `src/khiops-runner.ts`; output
+parsing in `src/khiops-validation.ts`. Preserve the split: collection `kdic` (built-in) vs `khiops`
+(native). Native runs only after a save, only when built-in validation found no error, and are serialized.
+If no binary is found, built-in diagnostics must remain available.
 
 ## Regex tips
 
-- `text` in `validateDocument` has line comments replaced with spaces — safe for offset arithmetic.
-- `typeAlt` is `KDIC_TYPES.join('|')` — use it in dynamic `RegExp` constructors for type matching.
-- Backtick-quoted identifiers in source: `` `name` `` (`` `` `` escapes a literal backtick).
-  Stored in `vars` and other maps in their **unquoted** form.
-- To find a variable declaration position in `blockText`, reset and rerun `varDeclRe` scanning
-  for the specific name in capture group 2.
+- Names are stored **unquoted** (`decodeIdentifier` / `tokenName`); backtick escapes are doubled (`` `` ``).
+- To search braces, parentheses or `;` in text, use `maskQuoted(text, resetAtNewline)` first and search the
+  result: quoted text is blanked, offsets and line breaks are preserved.
+- Prefer tokens (`tokenizeKdic`) over regexes when a check must not be fooled by strings or comments.

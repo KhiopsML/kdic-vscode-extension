@@ -74,7 +74,7 @@ Real-time diagnostics for structural grammar issues:
 
 Allowed after `;`: metadata annotations `<key>`, `<key=value>`, `<key="value">` and `//` comments.
 
-VS Code normalizes line endings in the editor. The extension reconciles the original source with unsaved edits to preserve isolated carriage returns inside quoted text. If the source cannot be read or reconciled, it warns and validates the editor text instead. Older VS Code versions may not support decoding every configured encoding. Saving may normalize those characters in the file; diagnostics then reflect the saved content.
+VS Code turns every carriage return of a file into a line break in the editor, whereas Khiops only treats `\n` as one: an isolated `\r` inside quoted text is legal in a `.kdic` file. For such a file the editor text no longer matches the file, so the built-in diagnostics are turned off for it and the native Khiops check is the one to rely on. Saving rewrites the file with ordinary line breaks, and built-in diagnostics resume.
 
 ### Native Khiops Validation (Optional)
 
@@ -164,6 +164,24 @@ KDIC_VSCODE_TEST_EXTENSIONS="$test_dir/extensions" "/Applications/Visual Studio 
 ```
 
 The temporary profile and packaged extension remain in `test_dir` for inspection.
+
+### Project structure
+
+| Path | Content |
+| ---- | ------- |
+| `src/extension.ts` | Entry point: registers language features and diagnostics |
+| `src/language-features.ts`, `src/language-data.ts`, `src/derivation-rules.ts` | Completion and hover, with their data (keywords, types, derivation rules) |
+| `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save |
+| `src/validator.ts`, `src/validation/` | Built-in validation: one small module per kind of check |
+| `src/khiops-runner.ts`, `src/khiops-validation.ts` | Locating and running Khiops, and reading its output |
+| `src/carriage-returns.ts` | Detects files with isolated carriage returns, which VS Code would corrupt in the editor |
+| `src/kdic-lexer.ts`, `src/kdic-syntax.ts`, `src/kdic-text-document.ts` | Tokenizer, shared syntax helpers, plain-text document |
+| `syntaxes/`, `snippets/`, `language-configuration.json` | Highlighting, snippets, editing configuration |
+| `scripts/` | Unit tests (`npm test`), smoke-test CLI, VS Code host tests |
+| `openspec/specs/` | Behavior specifications |
+
+`.github/copilot-instructions.md` describes the modules and the validation pipeline in more detail.
+Run `node scripts/smoke-test.js [--errors-only] [directory]` after `npm run compile` to validate every `.kdic` file of a directory.
 
 ### Package as `.vsix`
 

@@ -1,23 +1,31 @@
 'use strict';
 
+// End-to-end tests run inside a real VS Code with the packaged extension installed
+// (see "Tests in a VS Code host" in README.md).
+
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 async function waitFor(predicate, message) {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
     if (predicate()) { return; }
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await pause(100);
   }
   throw new Error(message);
 }
 
+/** Built-in diagnostics of a file. */
 function diagnostics(uri) {
   return vscode.languages.getDiagnostics(uri).filter(item => item.source === 'kdic');
 }
+
+const hasMessage = (uri, fragment) => diagnostics(uri).some(item => item.message.includes(fragment));
 
 async function edit(uri, start, end, text) {
   const document = await vscode.workspace.openTextDocument(uri);
@@ -26,117 +34,102 @@ async function edit(uri, start, end, text) {
   assert.ok(await vscode.workspace.applyEdit(change));
 }
 
-async function testDelayedSource() {
-  const source = 'Dictionary D\n{\n Categorical value = Copy("left\rright");\n};\n';
-  const bytes = Buffer.from(source);
-  const event = new vscode.EventEmitter();
-  let readCount = 0;
-  let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  const provider = {
-    onDidChangeFile: event.event,
-    watch: () => new vscode.Disposable(() => {}),
-    stat: () => ({ type: vscode.FileType.File, ctime: 0, mtime: 0, size: bytes.length }),
-    readDirectory: () => [],
-    readFile: async () => {
-      readCount++;
-      if (readCount === 2) { await gate; }
-      return bytes;
-    },
-    writeFile: () => { throw vscode.FileSystemError.NoPermissions(); },
-    delete: () => { throw vscode.FileSystemError.NoPermissions(); },
-    rename: () => { throw vscode.FileSystemError.NoPermissions(); },
-    createDirectory: () => { throw vscode.FileSystemError.NoPermissions(); },
-  };
-  const registration = vscode.workspace.registerFileSystemProvider('kdic-test-source', provider, { isCaseSensitive: true });
-  const uri = vscode.Uri.parse('kdic-test-source:/race.kdic');
-  try {
-    const document = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(document);
-    await waitFor(() => readCount >= 2, 'The extension did not read the original source');
-    const start = document.getText().indexOf('};');
-    await edit(uri, start, start, 'Numerical 1bad;\n');
-    release();
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Invalid variable name')),
-      'Delayed source lost the unsaved edit');
-    assert.strictEqual(diagnostics(uri).length, 1, JSON.stringify(diagnostics(uri).map(item => item.message)));
-    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
-    console.log('PASS delayed source read with concurrent unsaved edit');
-  } finally {
-    release();
-    registration.dispose();
-    event.dispose();
-  }
+/** Opens a file in an editor and returns its document. */
+async function open(fixture) {
+  const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fixture));
+  await vscode.window.showTextDocument(document);
+  return document;
 }
 
-async function testUnavailableSource() {
-  const initial = Buffer.from('Dictionary D\n{\n Categorical 1bad;\n};\n');
-  const event = new vscode.EventEmitter();
-  let readCount = 0;
-  const provider = {
-    onDidChangeFile: event.event,
-    watch: () => new vscode.Disposable(() => {}),
-    stat: () => ({ type: vscode.FileType.File, ctime: 0, mtime: 0, size: initial.length }),
-    readDirectory: () => [],
-    readFile: () => {
-      readCount++;
-      if (readCount > 1) { throw vscode.FileSystemError.Unavailable('Source unavailable'); }
-      return initial;
-    },
-    writeFile: () => { throw vscode.FileSystemError.NoPermissions(); },
-    delete: () => { throw vscode.FileSystemError.NoPermissions(); },
-    rename: () => { throw vscode.FileSystemError.NoPermissions(); },
-    createDirectory: () => { throw vscode.FileSystemError.NoPermissions(); },
-  };
-  const registration = vscode.workspace.registerFileSystemProvider('kdic-test-unavailable', provider, { isCaseSensitive: true });
-  const uri = vscode.Uri.parse('kdic-test-unavailable:/unavailable.kdic');
-  try {
-    const document = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(document);
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Invalid variable name')),
-      'Unavailable source did not fall back to the current editor text');
-    const start = document.getText().indexOf('1bad');
-    await edit(uri, start, start + 4, 'good');
-    await waitFor(() => diagnostics(uri).length === 0, 'Fallback retained stale diagnostics after editing');
-    await vscode.commands.executeCommand('undo');
-    await waitFor(() => !document.isDirty, 'Undo did not restore the clean document');
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-    console.log('PASS unavailable source falls back without stale diagnostics');
-  } finally {
-    registration.dispose();
-    event.dispose();
-  }
-}
+// ─────────────────────────── A file without isolated carriage returns ───────────────────────────
 
-async function testUtf16(directory) {
-  const source = 'Dictionary D\n{\n Categorical value = Copy("left\rright");\n};\n';
-  const fixture = path.join(directory, 'utf16.kdic');
-  fs.writeFileSync(fixture, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(source, 'utf16le')]));
+async function testPlainFile(directory) {
+  const fixture = path.join(directory, 'plain.kdic');
+  const source = 'Dictionary D\r\n{\r\n Categorical input;\r\n Categorical value = Copy(input);\r\n};\r\n';
+  fs.writeFileSync(fixture, source);
   const uri = vscode.Uri.file(fixture);
-  try {
-    const document = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(document);
-    const start = document.getText().indexOf('};');
-    await edit(uri, start, start, 'Numerical 1bad;\n');
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Invalid variable name')),
-      'UTF-16 document did not report the edited error');
-    assert.strictEqual(diagnostics(uri).length, 1, JSON.stringify(diagnostics(uri).map(item => item.message)));
-    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
-    console.log('PASS UTF-16 encoded source with unsaved edits');
-  } finally {
-    fs.unlinkSync(fixture);
-  }
+
+  const document = await open(fixture);
+  assert.strictEqual(document.languageId, 'kdic');
+  await pause(800);
+  assert.deepStrictEqual(diagnostics(uri), []);
+
+  const items = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider', uri, new vscode.Position(2, 1));
+  assert.ok(items.items.some(item => item.label === 'Numerical'));
+  const hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', uri, new vscode.Position(2, 5));
+  assert.ok(hovers.length);
+
+  // An unsaved error is reported where it is, and goes away when fixed.
+  const insertion = document.getText().indexOf('};');
+  await edit(uri, insertion, insertion, 'Categorical bad-1;\n');
+  await waitFor(() => hasMessage(uri, 'Invalid variable name'), 'Unsaved error not reported');
+  assert.strictEqual(diagnostics(uri).length, 1);
+  assert.strictEqual(document.getText(diagnostics(uri)[0].range), 'bad');
+  const errorStart = document.getText().indexOf('Categorical bad-1;');
+  await edit(uri, errorStart, errorStart + 'Categorical bad-1;'.length, '');
+  await waitFor(() => diagnostics(uri).length === 0, 'Correction did not clear diagnostics');
+
+  assert.ok(await document.save());
+  await pause(800);
+  assert.deepStrictEqual(diagnostics(uri), []);
+
+  // A change made on disk is picked up.
+  fs.writeFileSync(fixture, source.replace('Categorical input;', 'Categorical 1bad;'));
+  await waitFor(() => hasMessage(uri, 'Invalid variable name'), 'External file change did not refresh diagnostics');
+  fs.writeFileSync(fixture, source);
+  await waitFor(() => diagnostics(uri).length === 0, 'External file restoration did not refresh diagnostics');
+
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  console.log('PASS plain file: diagnostics, completion, hover, edits, save and external changes');
 }
+
+// ─────────────────────────── A file with an isolated carriage return ───────────────────────────
+
+async function testIsolatedCarriageReturn(directory) {
+  const fixture = path.join(directory, 'carriage-return.kdic');
+  // The isolated \r inside the string is a line break for VS Code, but not for Khiops.
+  const source = 'Dictionary D\r\n{\r\n Categorical value = Copy("left\rright");\r\n};\r\n';
+  fs.writeFileSync(fixture, source);
+  const uri = vscode.Uri.file(fixture);
+
+  const document = await open(fixture);
+  await pause(800);
+  assert.deepStrictEqual(diagnostics(uri), [], 'A file with an isolated carriage return got built-in diagnostics');
+
+  // Editing does not bring the diagnostics back: the editor text still cannot be trusted.
+  const insertion = document.getText().indexOf('};');
+  await edit(uri, insertion, insertion, 'Categorical bad-1;\n');
+  await pause(800);
+  assert.deepStrictEqual(diagnostics(uri), []);
+
+  // Saving rewrites the file with ordinary line breaks: it is validated normally again.
+  assert.ok(await document.save());
+  await waitFor(() => hasMessage(uri, 'Unclosed categorical constant'), 'Diagnostics did not resume after saving');
+  assert.ok(!/\r(?!\n)/.test(fs.readFileSync(fixture, 'utf8')), 'The saved file still has an isolated carriage return');
+
+  // The same holds when the file changes on disk.
+  fs.writeFileSync(fixture, source);
+  await waitFor(() => diagnostics(uri).length === 0, 'An external change adding a carriage return kept the diagnostics');
+  fs.writeFileSync(fixture, 'Dictionary D\n{\n Categorical 1bad;\n};\n');
+  await waitFor(() => hasMessage(uri, 'Invalid variable name'), 'An external change removing it did not bring them back');
+
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  console.log('PASS isolated carriage return: no built-in diagnostics until the file is saved or replaced');
+}
+
+// ─────────────────────────── Native Khiops validation ───────────────────────────
 
 async function testNativeValidation(directory) {
   const config = vscode.workspace.getConfiguration('kdic');
   const binary = path.join(directory, process.platform === 'win32' ? 'mock-khiops.cmd' : 'mock-khiops');
   const runs = path.join(directory, 'native-runs');
+  const slow = path.join(directory, 'native-slow');
   const fixture = path.join(directory, 'native.kdic');
   const uri = vscode.Uri.file(fixture);
+  // A mock Khiops that records each run, reports one error, and takes a second when the `slow` file exists.
   const script = process.platform === 'win32'
-    ? `@echo off\r\necho run>>"${runs}"\r\necho error : mock native error\r\n`
-    : `#!/bin/sh\nprintf 'run\\n' >> '${runs.replace(/'/g, "'\\''")}'\nprintf 'error : mock native error\\n'\n`;
+    ? `@echo off\r\necho run>>"${runs}"\r\nif exist "${slow}" timeout /t 1 /nobreak >nul\r\necho error : mock native error\r\n`
+    : `#!/bin/sh\nprintf 'run\\n' >> '${runs.replace(/'/g, "'\\''")}'\n[ -f '${slow.replace(/'/g, "'\\''")}' ] && sleep 1\nprintf 'error : mock native error\\n'\n`;
   fs.writeFileSync(binary, script, { mode: 0o755 });
   fs.writeFileSync(fixture, 'Dictionary D\n{\n Categorical value;\n};\n');
   const nativeDiagnostics = () => vscode.languages.getDiagnostics(uri).filter(item => item.source === 'khiops');
@@ -149,8 +142,7 @@ async function testNativeValidation(directory) {
   try {
     await config.update('khiopsPath', binary, vscode.ConfigurationTarget.Global);
     await config.update('enableKhiopsValidation', true, vscode.ConfigurationTarget.Global);
-    const document = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(document);
+    const document = await open(fixture);
 
     await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// valid\n');
     await waitFor(() => nativeDiagnostics().length === 1, 'Native validation did not run on a valid save');
@@ -160,46 +152,29 @@ async function testNativeValidation(directory) {
     await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
       'Built-in error not reported');
     await waitFor(() => nativeDiagnostics().length === 0, 'Built-in error did not clear native diagnostics');
-    await new Promise(resolve => setTimeout(resolve, 600));
+    await pause(600);
     assert.strictEqual(runCount(), 1, 'Native validation ran despite a built-in error');
+
+    // An edit made while Khiops is running makes its result obsolete: it must not be published.
+    fs.writeFileSync(slow, '');
+    try {
+      await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// pending\n');
+      await waitFor(() => runCount() === 2, 'Native validation did not start');
+      await edit(uri, document.getText().indexOf('value'), document.getText().indexOf('value') + 5, '1bad');
+      await pause(1800);
+      assert.strictEqual(nativeDiagnostics().length, 0, 'The result of a run on an outdated version was published');
+    } finally {
+      fs.unlinkSync(slow);
+    }
 
     await replaceDocument(document, 'Dictionary D\n{\n nonsense content\n Categorical value;\n};\n');
     await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Warning),
       'Built-in warning not reported');
-    await waitFor(() => nativeDiagnostics().length === 1 && runCount() === 2,
+    await waitFor(() => nativeDiagnostics().length === 1 && runCount() === 3,
       'Built-in warning prevented native validation');
 
-    const extension = vscode.extensions.getExtension('khiopsml.khiops-kdic');
-    const { KdicEditorDocuments } = require(path.join(extension.extensionPath, 'out', 'kdic-editor-documents'));
-    const originalGet = KdicEditorDocuments.prototype.get;
-    const originalRefresh = KdicEditorDocuments.prototype.refresh;
-    let deferredRefresh;
-    try {
-      KdicEditorDocuments.prototype.get = function(doc) {
-        return doc.uri.toString() === uri.toString() ? undefined : originalGet.call(this, doc);
-      };
-      KdicEditorDocuments.prototype.refresh = function(doc) {
-        if (doc.uri.toString() === uri.toString()) {
-          deferredRefresh = () => originalRefresh.call(this, doc);
-        } else {
-          originalRefresh.call(this, doc);
-        }
-      };
-      await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// pending\n');
-      await waitFor(() => deferredRefresh !== undefined, 'Native validation was not deferred');
-      await edit(uri, document.getText().indexOf('value'), document.getText().indexOf('value') + 5, '1bad');
-    } finally {
-      KdicEditorDocuments.prototype.get = originalGet;
-      KdicEditorDocuments.prototype.refresh = originalRefresh;
-      if (deferredRefresh) { deferredRefresh(); }
-    }
-    await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
-      'Edited pending document was not revalidated');
-    await new Promise(resolve => setTimeout(resolve, 600));
-    assert.strictEqual(runCount(), 2, 'Native validation ran for a stale pending document');
-
     await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// saved again\n');
-    await waitFor(() => runCount() === 3 && nativeDiagnostics().length === 1,
+    await waitFor(() => runCount() === 4 && nativeDiagnostics().length === 1,
       'Native validation did not run after saving the current version');
 
     await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
@@ -207,23 +182,23 @@ async function testNativeValidation(directory) {
     await replaceDocument(document, 'Dictionary D\n{\n Categorical 1bad;\n};\n// disabled\n');
     await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
       'Built-in validation stopped when native validation was disabled');
-    await new Promise(resolve => setTimeout(resolve, 600));
-    assert.strictEqual(runCount(), 3);
+    await pause(600);
+    assert.strictEqual(runCount(), 4);
 
     await config.update('khiopsPath', path.join(directory, 'missing-khiops'), vscode.ConfigurationTarget.Global);
     await config.update('enableKhiopsValidation', true, vscode.ConfigurationTarget.Global);
     await replaceDocument(document, 'Dictionary D\n{\n Categorical 1bad;\n};\n// missing\n');
     await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
       'Built-in validation stopped when the binary was missing');
-    await new Promise(resolve => setTimeout(resolve, 600));
-    assert.strictEqual(runCount(), 3);
+    await pause(600);
+    assert.strictEqual(runCount(), 4);
     assert.strictEqual(nativeDiagnostics().length, 0);
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     console.log('PASS native validation availability and save-time diagnostic gates');
   } finally {
     await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
     await config.update('khiopsPath', undefined, vscode.ConfigurationTarget.Global);
-    for (const file of [binary, runs, fixture]) {
+    for (const file of [binary, runs, slow, fixture]) {
       if (fs.existsSync(file)) { fs.unlinkSync(file); }
     }
   }
@@ -242,80 +217,13 @@ exports.run = async function run() {
   assert.ok(extension.isActive);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kdic-host-fixtures-'));
-  const fixture = path.join(directory, 'mixed.kdic');
-  const source = 'Dictionary D\r\n{\r\n Categorical input;\r\n Categorical value = Copy("left\r// ) > right");\r\n};\r\n';
-  fs.writeFileSync(fixture, source);
-  const uri = vscode.Uri.file(fixture);
   try {
-    const document = await vscode.workspace.openTextDocument(uri);
-    assert.strictEqual(document.languageId, 'kdic');
-    await vscode.window.showTextDocument(document);
-    await new Promise(resolve => setTimeout(resolve, 800));
-    assert.deepStrictEqual(diagnostics(uri), []);
-
-    const items = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider', uri, new vscode.Position(2, 1));
-    assert.ok(items.items.some(item => item.label === 'Numerical'));
-    const hovers = await vscode.commands.executeCommand('vscode.executeHoverProvider', uri, new vscode.Position(2, 5));
-    assert.ok(hovers.length);
-
-    const insertion = document.getText().indexOf('};');
-    await edit(uri, insertion, insertion, 'Categorical bad-1;\n');
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Invalid variable name')), 'Unsaved error not reported');
-    assert.strictEqual(diagnostics(uri).length, 1);
-    assert.strictEqual(document.getText(diagnostics(uri)[0].range), 'bad');
-    const errorStart = document.getText().indexOf('Categorical bad-1;');
-    await edit(uri, errorStart, errorStart + 'Categorical bad-1;'.length, '');
-    await waitFor(() => diagnostics(uri).length === 0, 'Correction did not clear diagnostics');
-
-    const before = document.getText().indexOf('Categorical input');
-    await edit(uri, before, before, 'Numerical 1bad;\n ');
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Invalid variable name')), 'Error before CR not reported');
-    assert.strictEqual(diagnostics(uri).length, 1);
-    const beforeStart = document.getText().indexOf('Numerical 1bad;');
-    const beforeEnd = document.getText().indexOf('Categorical input');
-    await edit(uri, beforeStart, beforeEnd, '');
-    await waitFor(() => diagnostics(uri).length === 0, 'Correction before CR did not clear diagnostics');
-
-    const content = document.getText();
-    const left = content.indexOf('left');
-    const right = content.indexOf('right', left);
-    await edit(uri, left, right + 'right'.length, 'replacement');
-    await new Promise(resolve => setTimeout(resolve, 800));
-    assert.deepStrictEqual(diagnostics(uri), []);
-    assert.ok(await document.save());
-    await new Promise(resolve => setTimeout(resolve, 800));
-    assert.deepStrictEqual(diagnostics(uri), []);
-    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
-
-    fs.writeFileSync(fixture, source);
-    const reopened = await vscode.workspace.openTextDocument(uri);
-    await vscode.window.showTextDocument(reopened);
-    await new Promise(resolve => setTimeout(resolve, 800));
-    assert.deepStrictEqual(diagnostics(uri), []);
-    fs.writeFileSync(fixture, source.replace('Categorical input;', 'Categorical 1bad;'));
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Invalid variable name')),
-      'External file change did not refresh diagnostics');
-    assert.strictEqual(diagnostics(uri).length, 1);
-    fs.writeFileSync(fixture, source);
-    await waitFor(() => diagnostics(uri).length === 0 && reopened.getText().includes('Categorical input;'),
-      'External file restoration did not refresh diagnostics');
-    fs.writeFileSync(fixture, source.replace('left\r', 'left\n'));
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Unclosed categorical constant')),
-      'External newline change was not revalidated');
-    fs.writeFileSync(fixture, source);
-    await waitFor(() => diagnostics(uri).length === 0, 'Restoring the original CR did not clear diagnostics');
-    await edit(uri, 0, 0, '// saved\n');
-    assert.ok(await reopened.save());
-    await waitFor(() => diagnostics(uri).some(item => item.message.includes('Unclosed categorical constant')),
-      'Saved normalized newline was not revalidated');
-    await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
-    await testDelayedSource();
-    await testUnavailableSource();
-    await testUtf16(directory);
+    await testPlainFile(directory);
+    await testIsolatedCarriageReturn(directory);
     await testNativeValidation(directory);
-    console.log('PASS installed VS Code extension: diagnostics, completion, hover, edits, positions, save and reload');
+    console.log('PASS installed VS Code extension');
   } finally {
-    if (fs.existsSync(fixture)) { fs.unlinkSync(fixture); }
+    for (const file of fs.readdirSync(directory)) { fs.unlinkSync(path.join(directory, file)); }
     fs.rmdirSync(directory);
   }
 };

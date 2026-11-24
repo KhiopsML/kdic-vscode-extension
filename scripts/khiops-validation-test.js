@@ -2,18 +2,7 @@
 'use strict';
 
 const assert = require('assert');
-const {
-  isNativeValidationCurrent,
-  parseKhiopsErrorLocations,
-  shouldRunNativeValidation,
-} = require('../out/khiops-validation');
-
-assert.strictEqual(shouldRunNativeValidation([]), true);
-assert.strictEqual(shouldRunNativeValidation([{ severity: 1 }]), true);
-assert.strictEqual(shouldRunNativeValidation([{ severity: 0 }]), false);
-assert.strictEqual(isNativeValidationCurrent(4, 4, false), true);
-assert.strictEqual(isNativeValidationCurrent(4, 5, false), false);
-assert.strictEqual(isNativeValidationCurrent(4, 4, true), false);
+const { parseKhiopsErrorLocations } = require('../out/khiops-validation');
 
 const documentText = [
   'Root Dictionary First {',
@@ -39,4 +28,4 @@ assert.deepStrictEqual(errorLocations, [
   { line: 0, message: 'Dictionary Second : Variable duplicate : Derivation rule is invalid' },
 ]);
 
-console.log('Native validation coordination tests passed.');
+console.log('Khiops output parsing tests passed.');

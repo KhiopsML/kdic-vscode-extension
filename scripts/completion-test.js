@@ -6,7 +6,6 @@ const Module = require('module');
 
 let completionProvider;
 const disposable = {};
-const event = () => disposable;
 class Position {
   constructor(line, character) { this.line = line; this.character = character; }
 }
@@ -27,18 +26,6 @@ const vscode = {
   languages: {
     registerCompletionItemProvider: (_selector, provider) => { completionProvider = provider; return disposable; },
     registerHoverProvider: () => disposable,
-    createDiagnosticCollection: () => disposable,
-  },
-  window: { createOutputChannel: () => disposable },
-  workspace: {
-    getConfiguration: () => ({ get: (key, fallback) => key === 'enableKhiopsValidation' ? false : fallback }),
-    textDocuments: [],
-    onWillSaveTextDocument: event,
-    onDidOpenTextDocument: event,
-    onDidChangeTextDocument: event,
-    onDidSaveTextDocument: event,
-    onDidCloseTextDocument: event,
-    onDidChangeConfiguration: event,
   },
 };
 const originalLoad = Module._load;
@@ -46,7 +33,7 @@ try {
   Module._load = function(request, ...args) {
     return request === 'vscode' ? vscode : originalLoad.call(this, request, ...args);
   };
-  require('../out/extension').activate({ subscriptions: [] });
+  require('../out/language-features').registerLanguageFeatures({ subscriptions: [] });
 } finally {
   Module._load = originalLoad;
 }

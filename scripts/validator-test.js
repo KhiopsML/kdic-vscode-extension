@@ -6,36 +6,17 @@ const assert = require('assert');
 const path = require('path');
 
 const validator = require(path.join(__dirname, '..', 'out', 'validator.js'));
+const { buildRuleMaps } = require(path.join(__dirname, '..', 'out', 'rule-maps.js'));
+const { stripLineComments, extractDictionaryNames } = require(path.join(__dirname, '..', 'out', 'kdic-syntax.js'));
 const { tokenizeKdic } = require(path.join(__dirname, '..', 'out', 'kdic-lexer.js'));
-const { KdicDocumentMirror } = require(path.join(__dirname, '..', 'out', 'kdic-document-mirror.js'));
+const { KdicTextDocument } = require(path.join(__dirname, '..', 'out', 'kdic-text-document.js'));
 
 function createDocument(text) {
-  const normalizedText = text.replace(/\r\n/g, '\n');
-  const lines = normalizedText.split('\n');
-  const offsets = [];
-  let offset = 0;
-
-  for (const line of lines) {
-    offsets.push(offset);
-    offset += line.length + 1;
-  }
-
-  return {
-    getText: () => normalizedText,
-    lineCount: lines.length,
-    lineAt: line => ({ text: lines[line] ?? '' }),
-    positionAt: position => {
-      let line = 0;
-      while (line + 1 < offsets.length && offsets[line + 1] <= position) {
-        line++;
-      }
-      return { line, character: position - offsets[line] };
-    },
-  };
+  return new KdicTextDocument(text.replace(/\r\n/g, '\n'));
 }
 
-const { validate, buildTypeMaps, stripLineComments, extractDictionaryNames } = validator;
-const { paramTypeMap, returnTypeMap, paramScopeMap } = buildTypeMaps([
+const { validate } = validator;
+const rules = buildRuleMaps([
   { label: 'Concat', returnType: 'Categorical', signature: 'Concat(Categorical value1, ...)' },
   { label: 'Replace', returnType: 'Categorical', signature: 'Replace(Categorical value, Numerical start, Categorical search, Categorical replacement)' },
   { label: 'TableCount', returnType: 'Numerical', signature: 'TableCount(Table table)' },
@@ -45,7 +26,7 @@ const { paramTypeMap, returnTypeMap, paramScopeMap } = buildTypeMaps([
 ]);
 
 function diagnosticsFor(text) {
-  return validate(createDocument(text), paramTypeMap, returnTypeMap, undefined, paramScopeMap);
+  return validate(createDocument(text), rules);
 }
 
 function assertNoDiagnostics(name, text) {
@@ -68,7 +49,7 @@ function testCommentHelpers() {
     'Categorical value = Concat("//", "text");           ',
   );
   assert.deepStrictEqual(
-    [...extractDictionaryNames(stripLineComments('// Dictionary Phantom\nDictionary Real {'))],
+    [...extractDictionaryNames('// Dictionary Phantom\nDictionary Real {')],
     ['Real'],
   );
 }
@@ -101,49 +82,18 @@ function testLexicalTokens() {
   assert.deepStrictEqual(tokenizeKdic('// comment\r )\nDictionary').map(token => token.kind), ['comment', 'identifier']);
 }
 
-function testDocumentMirror() {
+function testTextDocument() {
+  // Raw file text: CRLF line breaks, and an isolated carriage return inside a quoted value.
   const source = 'Dictionary Records\r\n{\r\n Categorical value = Copy("a\r<b>");\r\n};\r\n';
-  for (const eol of ['\n', '\r\n']) {
-    const model = source.replace(/\r\n|\r|\n/g, eol);
-    const mirror = KdicDocumentMirror.create(source, model, eol);
-    assert.ok(mirror);
-    assert.deepStrictEqual(validate(mirror, paramTypeMap, returnTypeMap, undefined, paramScopeMap), []);
-    const sourceSuffix = source.indexOf('<b>');
-    const modelSuffix = model.indexOf('<b>');
-    assert.strictEqual(mirror.modelOffsetAt(sourceSuffix), modelSuffix);
-    assert.strictEqual(mirror.sourceOffsetAt(modelSuffix), sourceSuffix);
-    assert.strictEqual(mirror.lineAt(2).text, ' Categorical value = Copy("a\r<b>");');
+  const document = new KdicTextDocument(source);
+  assert.strictEqual(document.lineCount, 5);
+  assert.strictEqual(document.lineAt(2).text, ' Categorical value = Copy("a\r<b>");');
+  assert.deepStrictEqual(document.positionAt(source.indexOf('<b>')), { line: 2, character: 29 });
+  assert.deepStrictEqual(validate(document, rules), []);
 
-    const offset = model.indexOf('Records');
-    const edited = model.slice(0, offset) + 'New' + model.slice(offset);
-    const updated = mirror.applyChanges([{ rangeOffset: offset, rangeLength: 0, text: 'New' }], edited, eol);
-    assert.ok(updated);
-    assert.ok(updated.getText().includes('"a\r<b>"'));
-    assert.strictEqual(updated.modelOffsetAt(updated.getText().indexOf('<b>')), edited.indexOf('<b>'));
-    const invalidOffset = edited.indexOf('};');
-    const invalidModel = edited.slice(0, invalidOffset) + `Categorical bad-1;${eol}` + edited.slice(invalidOffset);
-    const invalidMirror = updated.applyChanges(
-      [{ rangeOffset: invalidOffset, rangeLength: 0, text: `Categorical bad-1;${eol}` }],
-      invalidModel, eol,
-    );
-    assert.ok(invalidMirror);
-    const diagnostic = validate(invalidMirror, paramTypeMap, returnTypeMap, undefined, paramScopeMap)
-      .find(d => d.message.includes('Invalid variable name'));
-    assert.ok(diagnostic);
-    assert.strictEqual(invalidMirror.modelOffsetAt(invalidMirror.offsetAt(diagnostic.line, diagnostic.col)), invalidModel.indexOf('bad-1'));
-
-    const start = edited.indexOf('"a');
-    const end = edited.indexOf('");', start);
-    const replaced = edited.slice(0, start) + '"replacement' + edited.slice(end);
-    const removed = updated.applyChanges([{ rangeOffset: start, rangeLength: end - start, text: '"replacement' }], replaced, eol);
-    assert.ok(removed);
-    assert.ok(!removed.getText().includes('a\r<b>'));
-    assert.strictEqual(KdicDocumentMirror.create(source, model + 'x', eol), undefined);
-  }
-  const invalid = 'Dictionary D\n{\n Categorical x = Copy("broken\nvalue");\n};\n';
-  const mirror = KdicDocumentMirror.create(invalid, invalid, '\n');
-  assert.ok(validate(mirror, paramTypeMap, returnTypeMap, undefined, paramScopeMap)
-    .some(d => d.message.includes('Unclosed categorical constant')));
+  // A genuine line break inside a quoted value is still an error.
+  const broken = new KdicTextDocument('Dictionary D\n{\n Categorical x = Copy("broken\nvalue");\n};\n');
+  assert.ok(validate(broken, rules).some(d => d.message.includes('Unclosed categorical constant')));
 }
 
 function testQuotedStringsAndIdentifiers() {
@@ -169,6 +119,18 @@ function testStringSemicolonInDerivation() {
     Categorical value = Replace(name, 1, ";", ",");
     Categorical description; <Description="A > B">
 };`);
+
+  assertNoDiagnostics('commas inside a string argument are not argument separators', `Dictionary Texts
+{
+    Categorical name;
+    Categorical value = Replace(name, 1, "a, b, c", "d");
+};`);
+
+  assertDiagnostic('parentheses inside a backtick argument do not hide the call', `Dictionary Texts
+{
+    Numerical n;
+    Categorical value = Replace(n, 1, \`x(y)\`, "z");
+};`, "'n' is 'Numerical' but 'Replace' expects 'Categorical'");
 }
 
 function testUnknownDictionaryReference() {
@@ -295,6 +257,9 @@ function testVariableBlocks() {
         Numerical archive = Copy(archive);
     } Words;
 };`, 'Variable block members cannot be derived individually');
+  const derivedMember = diagnosticsFor('Dictionary Document\n{\n    {\n        Numerical archive = Copy(archive);\n    } Words;\n};')
+    .find(d => d.message.includes('cannot be derived individually'));
+  assert.strictEqual(derivedMember.col, '        Numerical archive '.length, 'the column accounts for indentation');
 
   assertDiagnostic('unnamed variable block', `Dictionary Document
 {
@@ -327,7 +292,7 @@ function testDeclarationTerminators() {
 };`;
   assertDiagnostic('multiline missing semicolon', missing, "Missing ';' at end of variable declaration");
   assertNoDiagnostics('multiline declaration with semicolon', missing.replace('    )\n', '    );\n'));
-  const cursorDiagnostics = validate(createDocument(missing), paramTypeMap, returnTypeMap, 2, paramScopeMap);
+  const cursorDiagnostics = validate(createDocument(missing), rules, 2);
   assert.ok(!cursorDiagnostics.some(d => d.message.includes("Missing ';' at end of variable declaration")));
   assertNoDiagnostics('inline declarations', 'Dictionary Records { Categorical id; Numerical value; };');
   assertNoDiagnostics('inline metadata and declarations', 'Dictionary Records { Categorical id; <Key> Numerical value; };');
@@ -431,7 +396,7 @@ Dictionary Achat
 function run() {
   testCommentHelpers();
   testLexicalTokens();
-  testDocumentMirror();
+  testTextDocument();
   testQuotedStringsAndIdentifiers();
   testStringSemicolonInDerivation();
   testUnknownDictionaryReference();

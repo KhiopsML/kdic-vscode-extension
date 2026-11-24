@@ -4,12 +4,10 @@
 
 Provide editing assistance for Khiops dictionary files in VS Code without requiring a Khiops installation.
 
-## Evidence and scope
+## Scope and verification
 
-- **Implementation inspected:** `package.json`, `src/extension.ts`, `syntaxes/kdic.tmLanguage.json`, `snippets/kdic.code-snippets`, and `language-configuration.json`.
-- **Documented intent:** `README.md` and `README.extension.md`.
-- **Automated verification:** focused completion tests exercise lexical context and provider results with a VS Code mock. They are not VS Code host integration tests. Hovers, highlighting, and snippets are not covered by these tests.
-- **Language reference:** [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/). Highlighting and completion are editing aids, not proof that text is valid Khiops.
+- Highlighting and completion are editing aids, not proof that text is valid Khiops. Language reference: [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/).
+- `scripts/completion-context-test.js` and `scripts/completion-test.js` cover the completion context and provider results with a VS Code mock; `scripts/vscode-host-tests/` checks completion and hover in a real VS Code. Highlighting, snippets, and visual theme rendering have no automated tests.
 
 ## Requirements
 
@@ -29,43 +27,29 @@ The extension SHALL offer completion items according to the current document pos
 
 #### Scenario: Inside a block
 - **WHEN** completion is requested inside a block and the current line prefix contains no unquoted assignment outside recognized metadata or a comment
-- **THEN** the provider offers `Unused`, native and advanced types, and its registered derivation rules
+- **THEN** the provider offers `Unused`, native and advanced types, and the registered derivation rules
 
 #### Scenario: Derivation context
 - **WHEN** completion is requested inside a block after an unquoted assignment `=` on the current line, excluding recognized metadata and comments
-- **THEN** the provider offers its registered derivation rules rather than type and `Unused` entries
+- **THEN** the provider offers the registered derivation rules rather than type and `Unused` entries
 
 #### Scenario: Relation target
 - **WHEN** completion is requested immediately after `Entity(` or `Table(`, allowing whitespace
 - **THEN** the provider offers dictionary names found in the current document, excluding commented-out declarations
 
-#### Scenario: Line containing a comment marker
-- **WHEN** the current line prefix contains an unquoted `//` comment marker
+#### Scenario: Comment marker
+- **WHEN** the current line prefix contains an unquoted `//` comment marker, including after quoted text containing `//`
 - **THEN** the provider returns no completion items
 
-#### Scenario: Comment marker in quoted text
-- **WHEN** completion is requested after `//` inside a double-quoted string or backtick-quoted identifier, without an actual comment before the cursor
-- **THEN** the provider does not suppress suggestions because of that marker
+#### Scenario: Quoted text
+- **WHEN** a `//` or `=` appears only inside a double-quoted string or backtick-quoted identifier, including strings with doubled quote characters or left unclosed at the cursor
+- **THEN** it is not interpreted as a comment marker or assignment, and the normal suggestions are offered
 
-#### Scenario: Comment after quoted text
-- **WHEN** the current line prefix contains quoted `//` followed by an unquoted `//` comment marker
-- **THEN** the provider returns no completion items
-
-#### Scenario: Equals in quoted text
-- **WHEN** a block line prefix contains `=` only inside a double-quoted string or backtick-quoted identifier and contains no unquoted assignment outside recognized metadata
+#### Scenario: Metadata
+- **WHEN** the block line prefix contains recognized metadata with `=` and no other unquoted assignment
 - **THEN** the provider offers the normal non-derivation suggestions
-
-#### Scenario: Metadata without assignment
-- **WHEN** the block line prefix contains recognized metadata with `=` and no unquoted assignment outside that metadata
-- **THEN** the provider offers the normal non-derivation suggestions
-
-#### Scenario: Metadata and real assignment
-- **WHEN** the block line prefix contains recognized metadata and an unquoted assignment outside that metadata
-- **THEN** the provider offers derivation-rule suggestions rather than type and `Unused` entries
-
-#### Scenario: Escaped and incomplete quoted text
-- **WHEN** a string or backtick identifier includes doubled quote characters or remains unclosed at the cursor
-- **THEN** `//` and `=` inside that quoted text are not interpreted as a comment marker or assignment
+- **WHEN** it also contains an unquoted assignment outside that metadata
+- **THEN** the provider offers derivation rules rather than type and `Unused` entries
 
 ### Requirement: Hover documentation
 The extension SHALL show documentation for recognized keywords, types, and registered derivation-rule names.
@@ -85,7 +69,7 @@ The extension SHALL contribute KDIC snippets and language editing configuration.
 - **WHEN** VS Code applies the KDIC language configuration
 - **THEN** it uses `//` for line comments and provides the configured bracket, auto-closing, and indentation behavior
 
-## Divergences and open questions
+## Known limitations
 
-- The README lists `Dictionary` and `Root` as top-level completions; the provider also returns `Unused` there. The project owner confirmed that this extra suggestion is unwanted. The scenario above records the current behavior until it is corrected.
-- **TODO:** Add automated VS Code host tests for completions, hovers, snippets, and diagnostics, and TextMate tokenization tests for highlighting. Current tests do not establish these behaviors across editing contexts or verify visual theme rendering.
+- The README lists `Dictionary` and `Root` as top-level completions; the provider also returns `Unused` there. The project owner confirmed that this extra suggestion is unwanted; the first scenario records the current behavior until it is corrected.
+- TODO: TextMate tokenization tests for highlighting, and host tests for snippets.

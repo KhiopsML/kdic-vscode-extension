@@ -78,7 +78,7 @@
           "enumDescriptions": [
             "Show only Khiops native errors (requires Khiops binary)",
             "Show only built-in extension errors",
-            "Show errors from both Khiops and the built-in extension"
+            "Show both sources; run Khiops only when built-in validation reports no errors"
           ],
           "description": "Which diagnostic source to display in the Problems pane."
         },
@@ -99,7 +99,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "test": "npm run compile && node scripts/validator-test.js && node scripts/editor-documents-test.js && node scripts/completion-context-test.js && node scripts/completion-test.js",
+    "test": "npm run compile && node scripts/validator-test.js && node scripts/editor-documents-test.js && node scripts/completion-context-test.js && node scripts/completion-test.js && node scripts/khiops-validation-test.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --readme-path README.extension.md",
     "smoke-test": "node scripts/smoke-test.js",

@@ -49,6 +49,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { analyzeCompletionPrefix } from './completion-context';
+import {
+  isNativeValidationCurrent,
+  parseKhiopsErrorLocations,
+  shouldRunNativeValidation,
+} from './khiops-validation';
 import { KdicDocumentMirror } from './kdic-document-mirror';
 import { KdicEditorDocuments } from './kdic-editor-documents';
 import {
@@ -560,7 +565,7 @@ const { paramTypeMap: PARAM_TYPE_MAP, returnTypeMap: RETURN_TYPE_MAP, paramScope
  * Delegates to the shared `validate()` function in validator.ts and converts
  * the plain KdicDiagnostic results to vscode.Diagnostic objects.
  */
-function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection, mirror: KdicDocumentMirror): void {
+function validateDocument(document: vscode.TextDocument, collection: vscode.DiagnosticCollection, mirror: KdicDocumentMirror): vscode.Diagnostic[] {
   const editor = vscode.window.activeTextEditor;
   const cursorLine = editor && editor.document === document
     ? mirror.positionAt(mirror.sourceOffsetAt(document.offsetAt(editor.selection.active))).line : undefined;
@@ -578,6 +583,7 @@ function validateDocument(document: vscode.TextDocument, collection: vscode.Diag
     return diag;
   });
   collection.set(document.uri, diags);
+  return diags;
 }
 
 // ─────────────────────── Khiops native validation ───────────────────────────
@@ -690,43 +696,16 @@ function buildCheckScenario(kdicPath: string): string {
  *   - With line number: "error : Read dictionary file Line 7 : Missing ';'"
  *   - Without line number: "error : Variable test : Derivation rule TableCount incorrectly specified"
  */
-function parseKhiopsErrors(output: string, docUri: vscode.Uri): vscode.Diagnostic[] {
-  const diags: vscode.Diagnostic[] = [];
-  const reWithLine = /error\s*:\s*.*?Line\s+(\d+)\s*:\s*(.+)$/gm;
-  const reGeneral = /error\s*:\s*(.+)$/gm;
-  const matched = new Set<number>(); // track character offsets already matched
-
-  // First pass: errors with line numbers
-  let m: RegExpExecArray | null;
-  while ((m = reWithLine.exec(output)) !== null) {
-    matched.add(m.index);
-    const line = Math.max(0, parseInt(m[1], 10) - 1);
-    const message = m[2].trim();
+function parseKhiopsErrors(output: string, documentText: string): vscode.Diagnostic[] {
+  return parseKhiopsErrorLocations(output, documentText).map(({ line, message }) => {
     const diag = new vscode.Diagnostic(
       new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER),
       message,
       vscode.DiagnosticSeverity.Error,
     );
     diag.source = 'khiops';
-    diags.push(diag);
-  }
-
-  // Second pass: errors without line numbers (placed at line 0)
-  while ((m = reGeneral.exec(output)) !== null) {
-    if (matched.has(m.index)) { continue; } // already captured with line number
-    const message = m[1].trim();
-    // Skip summary lines like "Errors detected during parsing" or "Read cancelled"
-    if (/Errors detected during parsing|Read cancelled/i.test(message)) { continue; }
-    const diag = new vscode.Diagnostic(
-      new vscode.Range(0, 0, 0, Number.MAX_SAFE_INTEGER),
-      message,
-      vscode.DiagnosticSeverity.Error,
-    );
-    diag.source = 'khiops';
-    diags.push(diag);
-  }
-
-  return diags;
+    return diag;
+  });
 }
 
 /** Active Khiops validation promise — used to serialize runs. */
@@ -743,8 +722,15 @@ function runKhiopsValidation(
   outputChannel: vscode.OutputChannel,
 ): void {
   if (doc.uri.scheme !== 'file') { return; }
+  const documentVersion = doc.version;
+  const documentText = doc.getText();
 
   khiopsRunning = khiopsRunning.then(() => new Promise<void>((resolve) => {
+    if (!isNativeValidationCurrent(documentVersion, doc.version, doc.isClosed)) {
+      resolve();
+      return;
+    }
+
     const kdicPath = doc.uri.fsPath;
     const scenarioContent = buildCheckScenario(kdicPath);
     const tmpDir = os.tmpdir();
@@ -812,9 +798,11 @@ function runKhiopsValidation(
         logKhiopsTrace(outputChannel, `[Khiops] No output captured (exit ok, no errors)`);
       }
 
-      const diags = parseKhiopsErrors(output, doc.uri);
+      const diags = parseKhiopsErrors(output, documentText);
       logKhiopsTrace(outputChannel, `[Khiops] Parsed ${diags.length} diagnostic(s)`);
-      khiopsDiags.set(doc.uri, diags);
+      if (isNativeValidationCurrent(documentVersion, doc.version, doc.isClosed)) {
+        khiopsDiags.set(doc.uri, diags);
+      }
 
       resolve();
     });
@@ -1008,11 +996,47 @@ export function activate(context: vscode.ExtensionContext): void {
   // Always register listeners and branch on live runtime state.
   const validateTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const saveReasons = new Map<string, vscode.TextDocumentSaveReason>();
+  const builtInValidationResults = new Map<string, {
+    version: number;
+    diagnostics: readonly vscode.Diagnostic[];
+  }>();
+  const pendingNativeValidation = new Map<string, number>();
+
+  const validateAndCache = (doc: vscode.TextDocument, mirror: KdicDocumentMirror): readonly vscode.Diagnostic[] => {
+    const result = validateDocument(doc, diagnostics, mirror);
+    builtInValidationResults.set(doc.uri.toString(), { version: doc.version, diagnostics: result });
+    return result;
+  };
+
+  const runNativeIfAllowed = (doc: vscode.TextDocument, builtInDiags: readonly vscode.Diagnostic[]): void => {
+    if (!(runtimeState.useKhiops && runtimeState.khiopsPath && doc.uri.scheme === 'file')) {
+      khiopsDiags.delete(doc.uri);
+      return;
+    }
+    if (!shouldRunNativeValidation(runtimeState.diagnosticSource, builtInDiags)) {
+      logKhiopsTrace(outputChannel, `[Khiops] Skipped: built-in validation found errors for ${doc.fileName}`);
+      khiopsDiags.delete(doc.uri);
+      return;
+    }
+    logKhiopsTrace(outputChannel, `[Khiops] onDidSave: ${doc.fileName}`);
+    runKhiopsValidation(doc, runtimeState.khiopsPath, khiopsDiags, outputChannel);
+  };
+
   const sourceDocuments = new KdicEditorDocuments(doc => {
     if (!runtimeState.useExtension || doc.isClosed) { return; }
     const mirror = sourceDocuments.get(doc);
-    if (mirror) { validateDocument(doc, diagnostics, mirror); }
-    else { diagnostics.delete(doc.uri); }
+    const docKey = doc.uri.toString();
+    if (mirror) {
+      const diags = validateAndCache(doc, mirror);
+      const pendingVersion = pendingNativeValidation.get(docKey);
+      if (pendingVersion !== undefined) {
+        pendingNativeValidation.delete(docKey);
+        if (pendingVersion === doc.version) { runNativeIfAllowed(doc, diags); }
+      }
+    } else {
+      diagnostics.delete(doc.uri);
+      builtInValidationResults.delete(docKey);
+    }
   });
   context.subscriptions.push(sourceDocuments);
 
@@ -1020,8 +1044,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const requestValidation = (doc: vscode.TextDocument): void => {
     sourceDocuments.open(doc);
     const mirror = sourceDocuments.get(doc);
-    if (mirror) { validateDocument(doc, diagnostics, mirror); }
-    else { diagnostics.delete(doc.uri); }
+    if (mirror) { validateAndCache(doc, mirror); }
+    else {
+      diagnostics.delete(doc.uri);
+      builtInValidationResults.delete(doc.uri.toString());
+    }
   };
 
   /** Updates open KDIC documents and clears diagnostics for disabled sources. */
@@ -1033,6 +1060,7 @@ export function activate(context: vscode.ExtensionContext): void {
         requestValidation(doc);
       } else {
         diagnostics.delete(doc.uri);
+        builtInValidationResults.delete(doc.uri.toString());
         sourceDocuments.close(doc);
       }
 
@@ -1057,6 +1085,7 @@ export function activate(context: vscode.ExtensionContext): void {
         requestValidation(doc);
       } else {
         diagnostics.delete(doc.uri);
+        builtInValidationResults.delete(doc.uri.toString());
       }
 
       if (!runtimeState.useKhiops) {
@@ -1067,6 +1096,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.document.languageId !== 'kdic') { return; }
 
       const docKey = e.document.uri.toString();
+      const pendingVersion = pendingNativeValidation.get(docKey);
+      if (pendingVersion !== undefined && pendingVersion !== e.document.version) {
+        pendingNativeValidation.delete(docKey);
+      }
       if (runtimeState.useExtension) { sourceDocuments.change(e); }
       const pendingTimer = validateTimers.get(docKey);
       if (pendingTimer !== undefined) {
@@ -1080,6 +1113,7 @@ export function activate(context: vscode.ExtensionContext): void {
             requestValidation(e.document);
           } else {
             diagnostics.delete(e.document.uri);
+            builtInValidationResults.delete(docKey);
           }
         }, 300);
         validateTimers.set(docKey, timer);
@@ -1095,28 +1129,51 @@ export function activate(context: vscode.ExtensionContext): void {
       if (doc.languageId !== 'kdic') { return; }
 
       const docKey = doc.uri.toString();
-      if (runtimeState.useExtension) {
-        diagnostics.delete(doc.uri);
-        sourceDocuments.refresh(doc);
-      }
       const saveReason = saveReasons.get(docKey);
       saveReasons.delete(docKey);
 
       const runOnAutoSave = isKhiopsAutoSaveEnabled();
+      const skipSave = !runOnAutoSave
+        && saveReason !== undefined
+        && saveReason !== vscode.TextDocumentSaveReason.Manual;
 
       // Run on all saves by default. Set runKhiopsOnAutoSave to false for very large dictionary files.
-      if (!runOnAutoSave && saveReason !== undefined && saveReason !== vscode.TextDocumentSaveReason.Manual) {
+      if (skipSave) {
         logKhiopsTrace(outputChannel, `[Khiops] Skip non-manual save (reason=${saveReason}) for: ${doc.fileName}`);
-        return;
       }
 
-      if (!(runtimeState.useKhiops && runtimeState.khiopsPath && doc.uri.scheme === 'file')) {
+      const canRunNative = !skipSave
+        && runtimeState.useKhiops
+        && runtimeState.khiopsPath
+        && doc.uri.scheme === 'file';
+      let builtInDiags: readonly vscode.Diagnostic[] = [];
+      if (runtimeState.useExtension) {
+        const cached = builtInValidationResults.get(docKey);
+        if (cached?.version === doc.version) {
+          builtInDiags = cached.diagnostics;
+        } else {
+          const mirror = sourceDocuments.get(doc);
+          if (mirror) {
+            builtInDiags = validateAndCache(doc, mirror);
+          } else if (canRunNative && runtimeState.diagnosticSource === 'both') {
+            pendingNativeValidation.set(docKey, doc.version);
+            diagnostics.delete(doc.uri);
+            sourceDocuments.refresh(doc);
+            return;
+          }
+        }
+
+        diagnostics.delete(doc.uri);
+        sourceDocuments.refresh(doc);
+      }
+
+      if (skipSave) { return; }
+      if (!canRunNative) {
         khiopsDiags.delete(doc.uri);
         return;
       }
 
-      logKhiopsTrace(outputChannel, `[Khiops] onDidSave: ${doc.fileName}`);
-      runKhiopsValidation(doc, runtimeState.khiopsPath, khiopsDiags, outputChannel);
+      runNativeIfAllowed(doc, builtInDiags);
     }),
     vscode.workspace.onDidCloseTextDocument(doc => {
       const docKey = doc.uri.toString();
@@ -1127,6 +1184,8 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       diagnostics.delete(doc.uri);
       khiopsDiags.delete(doc.uri);
+      builtInValidationResults.delete(docKey);
+      pendingNativeValidation.delete(docKey);
       sourceDocuments.close(doc);
     }),
     vscode.workspace.onDidChangeConfiguration(e => {
@@ -1140,6 +1199,7 @@ export function activate(context: vscode.ExtensionContext): void {
         || e.affectsConfiguration('kdic.khiopsPath')
         || e.affectsConfiguration('kdic.diagnosticSource')
       ) {
+        pendingNativeValidation.clear();
         refreshRuntimeState();
         revalidateAllOpenKdicDocuments();
       }

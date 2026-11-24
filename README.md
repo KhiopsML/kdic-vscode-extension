@@ -80,6 +80,8 @@ VS Code normalizes line endings in the editor. The extension reconciles the orig
 
 When a Khiops binary is available, the extension can run native Khiops parsing diagnostics and show them in the Problems panel.
 
+With the default `kdic.diagnosticSource: "both"`, built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run. Select `khiops` or `extension` to use only one source.
+
 Configuration settings:
 
 - `kdic.enableKhiopsValidation` (`true` by default): enable or disable native Khiops checks

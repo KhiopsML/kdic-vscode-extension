@@ -50,6 +50,8 @@ Automatic discovery uses the following paths:
 3. `/usr/bin/MODL_openmpi` on Linux
 4. `%KHIOPS_HOME%\\bin\\MODL.exe` on Windows
 
+With the default `kdic.diagnosticSource: "both"`, built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run. Select `khiops` or `extension` to use only one source.
+
 ### Settings
 
 | Setting                       | Default | Purpose                                           |

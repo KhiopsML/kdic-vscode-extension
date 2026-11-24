@@ -80,12 +80,11 @@ VS Code normalizes line endings in the editor. The extension reconciles the orig
 
 When a Khiops binary is available, the extension can run native Khiops parsing diagnostics and show them in the Problems panel.
 
-With the default `kdic.diagnosticSource: "both"`, built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run. Select `khiops` or `extension` to use only one source.
+Built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run.
 
 Configuration settings:
 
 - `kdic.enableKhiopsValidation` (`true` by default): enable or disable native Khiops checks
-- `kdic.diagnosticSource` (`both` by default): choose `khiops`, `extension`, or `both`
 - `kdic.runKhiopsOnAutoSave` (`true` by default): also run native Khiops on auto-save; set to `false` for very large dictionary files
 - `kdic.enableDebugTraces` (`false` by default): enable verbose Khiops trace logs in the Output panel
 - `kdic.khiopsPath` (empty by default): path to the Khiops executable or its containing directory. Directory resolution uses `MODL` on macOS, `MODL_openmpi` on Linux, and `MODL.exe` on Windows. On macOS, use `/Applications/Khiops.app/Contents/Resources/bin/MODL` (file) or `/Applications/Khiops.app/Contents/Resources/bin` (directory).

@@ -50,14 +50,13 @@ Automatic discovery uses the following paths:
 3. `/usr/bin/MODL_openmpi` on Linux
 4. `%KHIOPS_HOME%\\bin\\MODL.exe` on Windows
 
-With the default `kdic.diagnosticSource: "both"`, built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run. Select `khiops` or `extension` to use only one source.
+Built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run.
 
 ### Settings
 
 | Setting                       | Default | Purpose                                           |
 | ----------------------------- | ------- | ------------------------------------------------- |
 | `kdic.enableKhiopsValidation` | `true`  | Enable native Khiops validation                   |
-| `kdic.diagnosticSource`       | `both`  | Show `khiops`, `extension`, or `both` diagnostics |
 | `kdic.runKhiopsOnAutoSave`    | `true`  | Run native validation after auto-save events      |
 | `kdic.enableDebugTraces`      | `false` | Write detailed Khiops traces to the Output panel  |
 | `kdic.khiopsPath`             | empty   | Set the Khiops executable or containing directory |
@@ -97,11 +96,6 @@ Use `Ctrl+Space` or `Cmd+Space` to request completions. Hover over a keyword, ty
 - Confirm that `kdic.enableKhiopsValidation` is enabled.
 - Set `kdic.khiopsPath` to the executable itself when automatic discovery does not find it.
 - Check the **Khiops** output channel when `kdic.enableDebugTraces` is enabled.
-- Use `kdic.diagnosticSource: "khiops"` to display only native diagnostics.
-
-### Too many diagnostics appear
-
-Set `kdic.diagnosticSource` to `extension` or `khiops` to use one diagnostic source instead of both.
 
 ## Requirements
 

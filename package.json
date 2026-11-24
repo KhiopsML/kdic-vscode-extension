@@ -66,22 +66,6 @@
           "default": true,
           "description": "Run Khiops on save to validate dictionary files."
         },
-        "kdic.diagnosticSource": {
-          "type": "string",
-          "order": 2,
-          "default": "both",
-          "enum": [
-            "khiops",
-            "extension",
-            "both"
-          ],
-          "enumDescriptions": [
-            "Show only Khiops native errors (requires Khiops binary)",
-            "Show only built-in extension errors",
-            "Show both sources; run Khiops only when built-in validation reports no errors"
-          ],
-          "description": "Which diagnostic source to display in the Problems pane."
-        },
         "kdic.runKhiopsOnAutoSave": {
           "type": "boolean",
           "order": 3,

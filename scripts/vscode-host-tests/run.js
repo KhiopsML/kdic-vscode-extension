@@ -128,10 +128,110 @@ async function testUtf16(directory) {
   }
 }
 
+async function testNativeValidation(directory) {
+  const config = vscode.workspace.getConfiguration('kdic');
+  const binary = path.join(directory, process.platform === 'win32' ? 'mock-khiops.cmd' : 'mock-khiops');
+  const runs = path.join(directory, 'native-runs');
+  const fixture = path.join(directory, 'native.kdic');
+  const uri = vscode.Uri.file(fixture);
+  const script = process.platform === 'win32'
+    ? `@echo off\r\necho run>>"${runs}"\r\necho error : mock native error\r\n`
+    : `#!/bin/sh\nprintf 'run\\n' >> '${runs.replace(/'/g, "'\\''")}'\nprintf 'error : mock native error\\n'\n`;
+  fs.writeFileSync(binary, script, { mode: 0o755 });
+  fs.writeFileSync(fixture, 'Dictionary D\n{\n Categorical value;\n};\n');
+  const nativeDiagnostics = () => vscode.languages.getDiagnostics(uri).filter(item => item.source === 'khiops');
+  const runCount = () => fs.existsSync(runs) ? fs.readFileSync(runs, 'utf8').trim().split(/\r?\n/).length : 0;
+  const replaceDocument = async (document, text) => {
+    await edit(uri, 0, document.getText().length, text);
+    assert.ok(await document.save());
+  };
+
+  try {
+    await config.update('khiopsPath', binary, vscode.ConfigurationTarget.Global);
+    await config.update('enableKhiopsValidation', true, vscode.ConfigurationTarget.Global);
+    const document = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(document);
+
+    await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// valid\n');
+    await waitFor(() => nativeDiagnostics().length === 1, 'Native validation did not run on a valid save');
+    assert.strictEqual(runCount(), 1);
+
+    await replaceDocument(document, 'Dictionary D\n{\n Categorical 1bad;\n};\n');
+    await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
+      'Built-in error not reported');
+    await waitFor(() => nativeDiagnostics().length === 0, 'Built-in error did not clear native diagnostics');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.strictEqual(runCount(), 1, 'Native validation ran despite a built-in error');
+
+    await replaceDocument(document, 'Dictionary D\n{\n nonsense content\n Categorical value;\n};\n');
+    await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Warning),
+      'Built-in warning not reported');
+    await waitFor(() => nativeDiagnostics().length === 1 && runCount() === 2,
+      'Built-in warning prevented native validation');
+
+    const extension = vscode.extensions.getExtension('khiopsml.khiops-kdic');
+    const { KdicEditorDocuments } = require(path.join(extension.extensionPath, 'out', 'kdic-editor-documents'));
+    const originalGet = KdicEditorDocuments.prototype.get;
+    const originalRefresh = KdicEditorDocuments.prototype.refresh;
+    let deferredRefresh;
+    try {
+      KdicEditorDocuments.prototype.get = function(doc) {
+        return doc.uri.toString() === uri.toString() ? undefined : originalGet.call(this, doc);
+      };
+      KdicEditorDocuments.prototype.refresh = function(doc) {
+        if (doc.uri.toString() === uri.toString()) {
+          deferredRefresh = () => originalRefresh.call(this, doc);
+        } else {
+          originalRefresh.call(this, doc);
+        }
+      };
+      await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// pending\n');
+      await waitFor(() => deferredRefresh !== undefined, 'Native validation was not deferred');
+      await edit(uri, document.getText().indexOf('value'), document.getText().indexOf('value') + 5, '1bad');
+    } finally {
+      KdicEditorDocuments.prototype.get = originalGet;
+      KdicEditorDocuments.prototype.refresh = originalRefresh;
+      if (deferredRefresh) { deferredRefresh(); }
+    }
+    await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
+      'Edited pending document was not revalidated');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.strictEqual(runCount(), 2, 'Native validation ran for a stale pending document');
+
+    await replaceDocument(document, 'Dictionary D\n{\n Categorical value;\n};\n// saved again\n');
+    await waitFor(() => runCount() === 3 && nativeDiagnostics().length === 1,
+      'Native validation did not run after saving the current version');
+
+    await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
+    await waitFor(() => nativeDiagnostics().length === 0, 'Disabling native validation did not clear diagnostics');
+    await replaceDocument(document, 'Dictionary D\n{\n Categorical 1bad;\n};\n// disabled\n');
+    await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
+      'Built-in validation stopped when native validation was disabled');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.strictEqual(runCount(), 3);
+
+    await config.update('khiopsPath', path.join(directory, 'missing-khiops'), vscode.ConfigurationTarget.Global);
+    await config.update('enableKhiopsValidation', true, vscode.ConfigurationTarget.Global);
+    await replaceDocument(document, 'Dictionary D\n{\n Categorical 1bad;\n};\n// missing\n');
+    await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Error),
+      'Built-in validation stopped when the binary was missing');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    assert.strictEqual(runCount(), 3);
+    assert.strictEqual(nativeDiagnostics().length, 0);
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    console.log('PASS native validation availability and save-time diagnostic gates');
+  } finally {
+    await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
+    await config.update('khiopsPath', undefined, vscode.ConfigurationTarget.Global);
+    for (const file of [binary, runs, fixture]) {
+      if (fs.existsSync(file)) { fs.unlinkSync(file); }
+    }
+  }
+}
+
 exports.run = async function run() {
   const config = vscode.workspace.getConfiguration('kdic');
   await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
-  await config.update('diagnosticSource', 'extension', vscode.ConfigurationTarget.Global);
 
   const extension = vscode.extensions.getExtension('khiopsml.khiops-kdic');
   assert.ok(extension, 'Installed extension not found');
@@ -212,6 +312,7 @@ exports.run = async function run() {
     await testDelayedSource();
     await testUnavailableSource();
     await testUtf16(directory);
+    await testNativeValidation(directory);
     console.log('PASS installed VS Code extension: diagnostics, completion, hover, edits, positions, save and reload');
   } finally {
     if (fs.existsSync(fixture)) { fs.unlinkSync(fixture); }

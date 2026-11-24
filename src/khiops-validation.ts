@@ -170,14 +170,11 @@ export function parseKhiopsErrorLocations(output: string, documentText: string):
   return locations;
 }
 
-/** Whether the selected diagnostic sources permit a native validation run. */
+/** Whether built-in diagnostics permit a native validation run. */
 export function shouldRunNativeValidation(
-  diagnosticSource: string,
   builtInDiagnostics: readonly { severity: number }[],
 ): boolean {
-  if (diagnosticSource === 'khiops') { return true; }
-  return diagnosticSource === 'both'
-    && !builtInDiagnostics.some(diagnostic => diagnostic.severity === Severity.Error);
+  return !builtInDiagnostics.some(diagnostic => diagnostic.severity === Severity.Error);
 }
 
 /** Whether a native result still belongs to the current, open document. */

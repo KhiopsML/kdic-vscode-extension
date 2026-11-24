@@ -950,38 +950,28 @@ export function activate(context: vscode.ExtensionContext): void {
     outputChannel.show(true);
   }
   type RuntimeValidationState = {
-    useExtension: boolean;
     useKhiops: boolean;
-    khiopsEnabled: boolean;
-    diagnosticSource: string;
     khiopsPath?: string;
   };
 
   let runtimeState: RuntimeValidationState = {
-    useExtension: true,
     useKhiops: false,
-    khiopsEnabled: true,
-    diagnosticSource: 'both',
   };
 
   /** Recomputes active diagnostic sources and resolves the configured Khiops binary. */
   const refreshRuntimeState = (): void => {
     const config = vscode.workspace.getConfiguration('kdic');
     const khiopsEnabled = config.get<boolean>('enableKhiopsValidation', true);
-    const diagnosticSource = config.get<string>('diagnosticSource', 'both');
     const khiopsPath = khiopsEnabled ? findKhiopsBinary(outputChannel) : undefined;
 
     runtimeState = {
-      useExtension: diagnosticSource === 'extension' || diagnosticSource === 'both' || !khiopsPath,
-      useKhiops: Boolean(khiopsPath && (diagnosticSource === 'khiops' || diagnosticSource === 'both')),
-      khiopsEnabled,
-      diagnosticSource,
+      useKhiops: Boolean(khiopsPath),
       khiopsPath,
     };
 
     logKhiopsTrace(
       outputChannel,
-      `[Khiops] Runtime config: enableKhiopsValidation=${khiopsEnabled}, diagnosticSource=${diagnosticSource}, useKhiops=${runtimeState.useKhiops}, useExtension=${runtimeState.useExtension}`,
+      `[Khiops] Runtime config: enableKhiopsValidation=${khiopsEnabled}, useKhiops=${runtimeState.useKhiops}`,
     );
 
     if (khiopsEnabled && !khiopsPath) {
@@ -1013,7 +1003,7 @@ export function activate(context: vscode.ExtensionContext): void {
       khiopsDiags.delete(doc.uri);
       return;
     }
-    if (!shouldRunNativeValidation(runtimeState.diagnosticSource, builtInDiags)) {
+    if (!shouldRunNativeValidation(builtInDiags)) {
       logKhiopsTrace(outputChannel, `[Khiops] Skipped: built-in validation found errors for ${doc.fileName}`);
       khiopsDiags.delete(doc.uri);
       return;
@@ -1023,7 +1013,7 @@ export function activate(context: vscode.ExtensionContext): void {
   };
 
   const sourceDocuments = new KdicEditorDocuments(doc => {
-    if (!runtimeState.useExtension || doc.isClosed) { return; }
+    if (doc.isClosed) { return; }
     const mirror = sourceDocuments.get(doc);
     const docKey = doc.uri.toString();
     if (mirror) {
@@ -1056,13 +1046,7 @@ export function activate(context: vscode.ExtensionContext): void {
     for (const doc of vscode.workspace.textDocuments) {
       if (doc.languageId !== 'kdic') { continue; }
 
-      if (runtimeState.useExtension) {
-        requestValidation(doc);
-      } else {
-        diagnostics.delete(doc.uri);
-        builtInValidationResults.delete(doc.uri.toString());
-        sourceDocuments.close(doc);
-      }
+      requestValidation(doc);
 
       if (!runtimeState.useKhiops) {
         khiopsDiags.delete(doc.uri);
@@ -1081,12 +1065,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidOpenTextDocument(doc => {
       if (doc.languageId !== 'kdic') { return; }
 
-      if (runtimeState.useExtension) {
-        requestValidation(doc);
-      } else {
-        diagnostics.delete(doc.uri);
-        builtInValidationResults.delete(doc.uri.toString());
-      }
+      requestValidation(doc);
 
       if (!runtimeState.useKhiops) {
         khiopsDiags.delete(doc.uri);
@@ -1100,26 +1079,17 @@ export function activate(context: vscode.ExtensionContext): void {
       if (pendingVersion !== undefined && pendingVersion !== e.document.version) {
         pendingNativeValidation.delete(docKey);
       }
-      if (runtimeState.useExtension) { sourceDocuments.change(e); }
+      sourceDocuments.change(e);
       const pendingTimer = validateTimers.get(docKey);
       if (pendingTimer !== undefined) {
         clearTimeout(pendingTimer);
         validateTimers.delete(docKey);
       }
-      if (runtimeState.useExtension) {
-        const timer = setTimeout(() => {
-          validateTimers.delete(docKey);
-          if (runtimeState.useExtension) {
-            requestValidation(e.document);
-          } else {
-            diagnostics.delete(e.document.uri);
-            builtInValidationResults.delete(docKey);
-          }
-        }, 300);
-        validateTimers.set(docKey, timer);
-      } else {
-        diagnostics.delete(e.document.uri);
-      }
+      const timer = setTimeout(() => {
+        validateTimers.delete(docKey);
+        requestValidation(e.document);
+      }, 300);
+      validateTimers.set(docKey, timer);
 
       if (!runtimeState.useKhiops) {
         khiopsDiags.delete(e.document.uri);
@@ -1147,25 +1117,23 @@ export function activate(context: vscode.ExtensionContext): void {
         && runtimeState.khiopsPath
         && doc.uri.scheme === 'file';
       let builtInDiags: readonly vscode.Diagnostic[] = [];
-      if (runtimeState.useExtension) {
-        const cached = builtInValidationResults.get(docKey);
-        if (cached?.version === doc.version) {
-          builtInDiags = cached.diagnostics;
-        } else {
-          const mirror = sourceDocuments.get(doc);
-          if (mirror) {
-            builtInDiags = validateAndCache(doc, mirror);
-          } else if (canRunNative && runtimeState.diagnosticSource === 'both') {
-            pendingNativeValidation.set(docKey, doc.version);
-            diagnostics.delete(doc.uri);
-            sourceDocuments.refresh(doc);
-            return;
-          }
+      const cached = builtInValidationResults.get(docKey);
+      if (cached?.version === doc.version) {
+        builtInDiags = cached.diagnostics;
+      } else {
+        const mirror = sourceDocuments.get(doc);
+        if (mirror) {
+          builtInDiags = validateAndCache(doc, mirror);
+        } else if (canRunNative) {
+          pendingNativeValidation.set(docKey, doc.version);
+          diagnostics.delete(doc.uri);
+          sourceDocuments.refresh(doc);
+          return;
         }
-
-        diagnostics.delete(doc.uri);
-        sourceDocuments.refresh(doc);
       }
+
+      diagnostics.delete(doc.uri);
+      sourceDocuments.refresh(doc);
 
       if (skipSave) { return; }
       if (!canRunNative) {
@@ -1197,7 +1165,6 @@ export function activate(context: vscode.ExtensionContext): void {
       if (
         e.affectsConfiguration('kdic.enableKhiopsValidation')
         || e.affectsConfiguration('kdic.khiopsPath')
-        || e.affectsConfiguration('kdic.diagnosticSource')
       ) {
         pendingNativeValidation.clear();
         refreshRuntimeState();

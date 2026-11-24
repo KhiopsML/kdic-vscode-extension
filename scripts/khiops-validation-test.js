@@ -8,11 +8,9 @@ const {
   shouldRunNativeValidation,
 } = require('../out/khiops-validation');
 
-assert.strictEqual(shouldRunNativeValidation('both', []), true);
-assert.strictEqual(shouldRunNativeValidation('both', [{ severity: 1 }]), true);
-assert.strictEqual(shouldRunNativeValidation('both', [{ severity: 0 }]), false);
-assert.strictEqual(shouldRunNativeValidation('khiops', [{ severity: 0 }]), true);
-assert.strictEqual(shouldRunNativeValidation('extension', []), false);
+assert.strictEqual(shouldRunNativeValidation([]), true);
+assert.strictEqual(shouldRunNativeValidation([{ severity: 1 }]), true);
+assert.strictEqual(shouldRunNativeValidation([{ severity: 0 }]), false);
 assert.strictEqual(isNativeValidationCurrent(4, 4, false), true);
 assert.strictEqual(isNativeValidationCurrent(4, 5, false), false);
 assert.strictEqual(isNativeValidationCurrent(4, 4, true), false);

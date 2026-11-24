@@ -1,5 +1,5 @@
 import { isNameToken, tokenName, type KdicToken } from '../kdic-lexer';
-import type { RuleMaps } from '../rule-maps';
+import { parameterTypeAt, type RuleMaps } from '../rule-maps';
 import { Severity, type DiagnosticCollector } from './diagnostics';
 import type { Dictionary, DictionaryHeader, Structure } from './structure';
 
@@ -130,10 +130,28 @@ function checkReturnTypes(
   }
 }
 
+/** The type of a constant written as an argument, or undefined for anything else (an unclosed string is reported elsewhere). */
+function constantType(token: KdicToken): string | undefined {
+  if (token.kind === 'string') { return token.closed === false ? undefined : 'Categorical'; }
+  return token.kind === 'number' || token.kind === 'missing' ? 'Numerical' : undefined;
+}
+
+/** A constant argument must have the type the rule expects; only `Numerical` and `Categorical` have constants. */
+function checkConstantArgument(
+  token: KdicToken, expected: string, ruleName: string, position: number, out: DiagnosticCollector,
+): void {
+  const actual = constantType(token);
+  if (!actual || actual === expected || !['Numerical', 'Categorical'].includes(expected)) { return; }
+  const text = token.text.length > 40 ? `${token.text.slice(0, 39)}…` : token.text;
+  out.atToken(token, `Constant ${text} is '${actual}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
+}
+
 /**
- * Checks the arguments of every simple rule call in the block (`= rule(a, b)`)
- * that is a bare variable of the current dictionary: it must be declared and
- * have the type the rule expects. Operands of another scope are left to Khiops.
+ * Checks the arguments of every simple rule call in the block (`= rule(a, b)`).
+ * A constant must have the type the rule expects. A bare variable of the current
+ * dictionary must be declared and have that type; operands of another scope are
+ * left to Khiops. Where a rule ends with `...`, the extra arguments repeat the last type. A call with
+ * fewer arguments than the rule has parameters is not checked.
  */
 function checkRuleArguments(
   { dictionary, variables }: DictionaryScope, tokens: readonly KdicToken[], rules: RuleMaps, out: DiagnosticCollector,
@@ -143,16 +161,17 @@ function checkRuleArguments(
     const call = parseSimpleCall(tokens, index);
     const paramTypes = call && rules.paramTypes.get(call.rule.text);
     if (!call || !paramTypes) { continue; }
+    // Parameters are known by position only when the call has them all: some rules also exist with fewer.
+    if (call.args.length < paramTypes.filter(type => type !== '...').length) { continue; }
 
     const ruleName = call.rule.text;
-    const baseTypes = paramTypes[paramTypes.length - 1] === '...' ? paramTypes.slice(0, -1) : paramTypes;
     // Rules over a table or entity: operands after the first live in the secondary table unless documented otherwise.
-    const isRelational = ['Table', 'Entity', 'Block(Table)', 'Block(Entity)'].includes(baseTypes[0] ?? '');
+    const isRelational = ['Table', 'Entity', 'Block(Table)', 'Block(Entity)'].includes(paramTypes[0] ?? '');
 
     call.args.forEach((arg, position) => {
-      if (arg.length !== 1 || arg[0].kind !== 'identifier') { return; }
-      const expected = position < baseTypes.length ? baseTypes[position] : 'any';
-      if (expected === 'any' || expected === '...' || expected.startsWith('Block(')) { return; }
+      const expected = parameterTypeAt(paramTypes, position) ?? 'any';
+      if (arg.length !== 1 || expected === 'any' || expected.startsWith('Block(')) { return; }
+      if (arg[0].kind !== 'identifier') { checkConstantArgument(arg[0], expected, ruleName, position, out); return; }
       const scope = rules.paramScopes.get(ruleName)?.[position] ?? (isRelational && position > 0 ? 'unknown' : 'current');
       if (scope !== 'current') { return; }
 

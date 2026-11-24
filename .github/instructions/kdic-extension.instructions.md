@@ -20,7 +20,7 @@ Append one entry to `DERIVATION_RULES` in `src/derivation-rules.ts`. **No other 
 - `detail` is the category shown in the completion list; `returnType` drives the return-type check
   (`Numerical|Categorical` is a union, `any` is unchecked).
 - Signature parsing: `TypeName argName` → expected type; a bare `argName` → `any` (unchecked);
-  a last parameter `...` → varargs (extra positions unchecked); `Block(Type) argName` → block argument (not type-checked).
+  a last parameter `...` → varargs (extra positions repeat the type before `...`, unless a parameter is `any` or a structure, in which case they are unchecked); `Block(Type) argName` → block argument (not type-checked).
 - Relational rules (first parameter `Table`/`Entity`): operands after the first are treated as
   secondary-scope and unchecked, unless the rule lists `operandScopes: ['current', 'secondary', …]`.
 

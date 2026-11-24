@@ -188,6 +188,22 @@ The validator SHALL compare recognized simple calls (`= rule(arg, …)` without 
 - **WHEN** a simple `TableCount` call uses a declared `Categorical` variable as its first argument
 - **THEN** the validator reports an argument-type error
 
+#### Scenario: Constant argument mismatch
+- **WHEN** a simple call passes a string constant where the rule expects `Numerical`, or a number or `#Missing` where it expects `Categorical`, at any position and whatever the operand scope
+- **THEN** the validator reports an error on the constant, naming its type, the rule, the expected type and the argument number
+- **WHEN** the constant has the expected type, or the parameter is of another type
+- **THEN** the validator reports nothing
+
+#### Scenario: Rule with a variable number of arguments
+- **WHEN** a rule ends with `...` and all its other parameters have a concrete type, such as `Sum(Numerical value1, ...)` or `Concat(Categorical value1, ...)`
+- **THEN** every extra argument is checked against the type before `...`, for variables and constants alike
+- **WHEN** a parameter of the rule is `any` or a structure, such as `DataGridDeployment`
+- **THEN** the extra arguments are not checked
+
+#### Scenario: Call with fewer arguments than parameters
+- **WHEN** a simple call has fewer arguments than the rule has parameters, as a rule that also exists in a shorter form (`ContributionValueAt` with a rank only)
+- **THEN** its arguments are not type-checked, since their positions do not match the registered signature
+
 #### Scenario: Missing argument variable
 - **WHEN** a simple call has a current-scope bare identifier argument with a known expected type that is not declared in the current dictionary
 - **THEN** the validator reports an undeclared-variable warning
@@ -232,5 +248,6 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled v
 - The official variable-block reference requires a `VarKey` for each member. The built-in checks do not enforce its presence, uniqueness, or validity.
 - Cross-table scopes, nested derivation semantics, joins, and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
 - The `#Khiops` header line and dictionary metadata are accepted as structural patterns; their exact compatibility with native Khiops is not established.
+- Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. Arguments of nested calls are not type-checked, and neither are operands of another scope.
 - A declaration the structure scan cannot recognize (for example junk before its type on the same line) is reported as an unknown line, and is not type-checked.
 - Native Khiops checks a date or time format only loosely (length, field positions and separators), so it accepts a few garbled variants of a time or timestamp format, such as `HH:MM:Ss` or `HH.MM ` with a trailing space. The built-in check reports every string outside the documented formats, so it can flag a format that Khiops would load.

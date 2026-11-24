@@ -50,6 +50,9 @@ Real-time diagnostics for simple derivation rule calls (non-nested arguments onl
   > `Categorical x = TableCount(t);` → error on `Categorical` (TableCount returns `Numerical`)
 - **Argument-type mismatch**: an argument variable has the wrong type for its parameter position.
   > `TableCount(Class)` where `Class` is `Categorical` → error on `Class` (expected `Table`)
+- **Constant-type mismatch**: a string constant where a `Numerical` is expected, or a number or `#Missing` where a `Categorical` is expected.
+  > `Concat("a", #Missing)` → error on `#Missing` (`Concat` expects `Categorical`)
+- **Rules with a variable number of arguments**: `Sum(Numerical value1, ...)`, `Concat(Categorical value1, ...)` and the like check every extra argument against the type before `...`. Calls that have fewer arguments than the registered signature are not checked.
 - **Undeclared variable argument**: a derivation argument variable is not declared in the current dictionary.
   > `Sum(Revenue, MissingVar)` → warning on `MissingVar` (likely typo)
 - **Key field not Categorical**: every field listed in a dictionary's key must be declared `Categorical`.

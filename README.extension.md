@@ -74,7 +74,7 @@ The built-in validator checks common problems while you edit, including:
 - Key fields that are not `Categorical`
 - Key fields missing from the dictionary
 - Unknown `Table(...)` and `Entity(...)` dictionary references
-- Simple derivation return-type and argument-type mismatches
+- Simple derivation return-type and argument-type mismatches, for variables and constants
 - Undeclared derivation arguments
 - Invalid derived key fields
 - Dictionary and variable names longer than 128 characters

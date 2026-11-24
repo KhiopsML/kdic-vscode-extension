@@ -27,6 +27,9 @@ const rules = buildRuleMaps([
   { label: 'TableMean', returnType: 'Numerical', signature: 'TableMean(Table table, Numerical value)', operandScopes: ['current', 'secondary'] },
   { label: 'TableDifference', returnType: 'Table', signature: 'TableDifference(Table table1, Table table2)', operandScopes: ['current', 'current'] },
   { label: 'TableAt', returnType: 'Entity', signature: 'TableAt(Table table, Numerical rank)' },
+  { label: 'Sum', returnType: 'Numerical', signature: 'Sum(Numerical value1, ...)' },
+  { label: 'Deploy', returnType: 'Categorical', signature: 'Deploy(Structure(Grid) grid, Numerical index, ...)' },
+  { label: 'Overloaded', returnType: 'Numerical', signature: 'Overloaded(Categorical key, Categorical target, Numerical rank)' },
 ]);
 
 function diagnosticsFor(text) {
@@ -427,6 +430,60 @@ function testFormatExamples() {
   }
 }
 
+function testConstantArguments() {
+  const document = declaration => `Dictionary Records
+{
+    Categorical text;
+    Numerical number;
+    Table(Records) rows;
+    ${declaration}
+};`;
+  const messages = declaration => diagnosticsFor(document(declaration)).map(diagnostic => diagnostic.message);
+
+  for (const declaration of [
+    'Categorical x = Concat("a", "b");',
+    'Categorical x = Concat(text, "b", text);',
+    'Numerical x = Sum(number, 3, -1.5, #Missing);',
+    'Categorical x = Replace("abc", 1, "b", "c");',
+    'Numerical x = TableMean(rows, 3);',
+    'Numerical x = TableMean(rows, #Missing);',
+    'Numerical x = Sum(number, Sum(1, "a"));', // nested calls are not checked
+  ]) {
+    assertNoDiagnostics(declaration, document(declaration));
+  }
+
+  const mismatch = (constant, type, rule, expected, argument) =>
+    `Constant ${constant} is '${type}' but '${rule}' expects '${expected}' for argument ${argument}.`;
+  for (const [declaration, expected] of [
+    ['Categorical x = Concat("a", #Missing);', mismatch('#Missing', 'Numerical', 'Concat', 'Categorical', 2)],
+    ['Categorical x = Concat("a", 3);', mismatch('3', 'Numerical', 'Concat', 'Categorical', 2)],
+    ['Categorical x = Concat(3, "a");', mismatch('3', 'Numerical', 'Concat', 'Categorical', 1)],
+    ['Numerical x = Sum(number, "a");', mismatch('"a"', 'Categorical', 'Sum', 'Numerical', 2)],
+    ['Numerical x = Sum("a", 1);', mismatch('"a"', 'Categorical', 'Sum', 'Numerical', 1)],
+    ['Categorical x = Replace("abc", "1", "b", "c");', mismatch('"1"', 'Categorical', 'Replace', 'Numerical', 2)],
+    ['Numerical x = TableMean(rows, "a");', mismatch('"a"', 'Categorical', 'TableMean', 'Numerical', 2)], // any scope
+  ]) {
+    assert.deepStrictEqual(messages(declaration), [expected], declaration);
+  }
+
+  // A variable of the wrong type is also found where a rule repeats its last parameter.
+  assert.deepStrictEqual(messages('Numerical x = Sum(number, text);'),
+    ["'text' is 'Categorical' but 'Sum' expects 'Numerical' for argument 2."]);
+
+  // The diagnostic covers the constant, which is shortened in the message when long.
+  const [found] = diagnosticsFor(document('Numerical x = Sum(number, "a");'));
+  assert.strictEqual(found.col, '    Numerical x = Sum(number, '.length);
+  assert.strictEqual(found.endCol - found.col, '"a"'.length);
+  const [long] = messages(`Numerical x = Sum(number, "${'a'.repeat(100)}");`);
+  assert.ok(long.length < 120 && long.includes('…'), long);
+
+  // Rules the signature does not describe well are left to Khiops.
+  assertNoDiagnostics('extra operands of an untyped rule', document('Categorical x = Deploy(rows, 1, rows, text, "a", 3);'));
+  assertNoDiagnostics('call with fewer arguments than parameters', document('Numerical x = Overloaded(text, 1);'));
+  assert.deepStrictEqual(messages('Numerical x = Overloaded(text, "t", "r");'),
+    [mismatch('"r"', 'Categorical', 'Overloaded', 'Numerical', 3)]);
+}
+
 function testDictionaryKeysAndNames() {
   assertNoDiagnostics('quoted multiline key', 'Dictionary Records (\n `a,b`,\n `a``b`\n)\n{\n Categorical `a,b`;\n Categorical `a``b`;\n};');
   assertNoDiagnostics('quoted parenthesis in key', 'Dictionary Records (`a)b`)\n{\n Categorical `a)b`;\n};');
@@ -516,6 +573,7 @@ function run() {
   testFormatMetadata();
   testFormatStrings();
   testFormatExamples();
+  testConstantArguments();
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();

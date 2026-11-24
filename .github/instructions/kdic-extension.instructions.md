@@ -45,6 +45,7 @@ Pick the module by what the check needs:
 |---|---|
 | tokens only (delimiters, metadata, constants) | the matching file, or a new `src/validation/<name>.ts` |
 | dictionaries / declarations / header | `dictionaries.ts` (reads the `Structure` built by `structure.ts`) |
+| rule calls in derivations (argument and result types, scopes) | `rule-calls.ts` (parses each derivation into a call tree) |
 | whole-line text | `line-grammar.ts` |
 
 Then call it from `validate()` in `src/validator.ts`, in pipeline order. Report through the

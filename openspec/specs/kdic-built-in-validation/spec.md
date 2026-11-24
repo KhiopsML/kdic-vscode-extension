@@ -6,7 +6,7 @@ Report common structural and type problems while editing a Khiops dictionary, wi
 
 ## Scope and verification
 
-- Validation is best-effort and structural. It does not claim to be a complete parser: the native Khiops parser remains authoritative for nested derivations, secondary-table scopes, joins, and complex block contents.
+- Validation is best-effort and structural. It does not claim to be a complete parser: the native Khiops parser remains authoritative for secondary-table scopes, joins, and complex block contents.
 - Language reference: [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/) and [variable blocks](https://khiops.org/api-docs/kdic/intro-block/).
 - `npm test` runs `scripts/validator-test.js` (examples of every requirement below, mostly matching message fragments) plus the editor-document lifecycle tests. `scripts/smoke-test.js` validates every `.kdic` file of a directory; on the local LearningTest corpus (6,177 files) it is the regression reference for false positives.
 - `scripts/vscode-host-tests/` exercises the packaged extension in a real VS Code (see `README.md`): diagnostic positions after edits, save, external changes, and files with isolated carriage returns.
@@ -177,19 +177,19 @@ The validator SHALL check recognized variable-block members and closing declarat
 - **WHEN** a recognized block member has an individual derivation, or the block closes without a name and semicolon
 - **THEN** the validator reports the corresponding error, positioned on the offending text
 
-### Requirement: Simple derivation type checks
-The validator SHALL compare recognized simple calls (`= rule(arg, …)` without nested parentheses) with registered rule types, without claiming complete derivation analysis. Argument diagnostics SHALL use the current dictionary only when the operand is known to have current scope.
+### Requirement: Derivation type checks
+The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), including the calls nested in their arguments, with registered rule types, without claiming complete derivation analysis. Argument diagnostics SHALL use the current dictionary only when the operand is known to have current scope.
 
 #### Scenario: Return type mismatch
-- **WHEN** a simple call to registered `TableCount` is assigned to a `Categorical` variable
+- **WHEN** a call to registered `TableCount` is assigned to a `Categorical` variable
 - **THEN** the validator reports a return-type error
 
 #### Scenario: Argument mismatch
-- **WHEN** a simple `TableCount` call uses a declared `Categorical` variable as its first argument
+- **WHEN** a `TableCount` call uses a declared `Categorical` variable as its first argument
 - **THEN** the validator reports an argument-type error
 
 #### Scenario: Constant argument mismatch
-- **WHEN** a simple call passes a string constant where the rule expects `Numerical`, or a number or `#Missing` where it expects `Categorical`, at any position and whatever the operand scope
+- **WHEN** a call passes a string constant where the rule expects `Numerical`, or a number or `#Missing` where it expects `Categorical`, at any position and whatever the operand scope
 - **THEN** the validator reports an error on the constant, naming its type, the rule, the expected type and the argument number
 - **WHEN** the constant has the expected type, or the parameter is of another type
 - **THEN** the validator reports nothing
@@ -201,15 +201,15 @@ The validator SHALL compare recognized simple calls (`= rule(arg, …)` without 
 - **THEN** the extra arguments are not checked
 
 #### Scenario: Call with fewer arguments than parameters
-- **WHEN** a simple call has fewer arguments than the rule has parameters, as a rule that also exists in a shorter form (`ContributionValueAt` with a rank only)
+- **WHEN** a call has fewer arguments than the rule has parameters, as a rule that also exists in a shorter form (`ContributionValueAt` with a rank only)
 - **THEN** its arguments are not type-checked, since their positions do not match the registered signature
 
 #### Scenario: Missing argument variable
-- **WHEN** a simple call has a current-scope bare identifier argument with a known expected type that is not declared in the current dictionary
+- **WHEN** a call has a current-scope bare identifier argument with a known expected type that is not declared in the current dictionary
 - **THEN** the validator reports an undeclared-variable warning
 
 #### Scenario: Backquoted variable argument
-- **WHEN** a simple call has a current-scope argument written between backquotes, such as `` `Predicted class` ``
+- **WHEN** a call has a current-scope argument written between backquotes, such as `` `Predicted class` ``
 - **THEN** it is checked like a plain variable, by its name without backquotes (a doubled backquote standing for one), and the diagnostics name it that way
 
 #### Scenario: Separators inside quoted arguments
@@ -229,12 +229,29 @@ The validator SHALL compare recognized simple calls (`= rule(arg, …)` without 
 - **THEN** the validator reports an argument-type error for `second`
 
 #### Scenario: Uncertain operand scope
-- **WHEN** a recognized simple call has an operand whose scope cannot be determined reliably
+- **WHEN** a recognized call has an operand whose scope cannot be determined reliably
 - **THEN** the validator does not issue a type mismatch or undeclared-variable warning for that operand based on the current dictionary
 
-#### Scenario: Nested call
-- **WHEN** a derivation contains nested function calls
-- **THEN** the simple-call checks do not establish that the nested expression is semantically valid
+#### Scenario: Nested call result
+- **WHEN** a call is an argument of a registered rule whose parameter at that position is a concrete type (not `any`, a structure or a block), and the nested rule is registered with a return type that does not include that type
+- **THEN** the validator reports an error on the nested rule's name, naming its return type, the enclosing rule, the expected type and the argument number
+- **WHEN** the nested rule returns several possible types, one of which is the expected type, or returns `any`
+- **THEN** the validator reports nothing
+
+#### Scenario: Calls nested in a nested call
+- **WHEN** a derivation nests calls at any depth
+- **THEN** every call is checked against its own parameters: its constants, its nested results and, where it is in the current scope, its variables
+- **WHEN** the declared variable's type differs from the type returned by the outermost rule
+- **THEN** the validator reports the return-type error, however deeply the derivation is nested
+
+#### Scenario: Scope of a nested call
+- **WHEN** a call is inside an operand of a table or entity rule that lives in the secondary table, or inside the operand of a rule that is not registered
+- **THEN** its variables are not checked against the current dictionary, since their scope is unknown
+- **THEN** its constants and the results of the calls nested in it are still checked, which holds in any scope
+
+#### Scenario: Call not closed
+- **WHEN** a call is not closed before the end of its statement, as while it is being typed, or is nested more than 100 levels deep
+- **THEN** the validator does not type-check it
 
 ### Requirement: Standalone smoke test
 The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled validator and rule definitions.
@@ -250,8 +267,8 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled v
 ## Known limitations
 
 - The official variable-block reference requires a `VarKey` for each member. The built-in checks do not enforce its presence, uniqueness, or validity.
-- Cross-table scopes, nested derivation semantics, joins, and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
+- Cross-table scopes, joins, and the complete grammar are not validated; absence of a diagnostic does not establish Khiops validity.
 - The `#Khiops` header line and dictionary metadata are accepted as structural patterns; their exact compatibility with native Khiops is not established.
-- Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. Arguments of nested calls are not type-checked, and neither are operands of another scope.
+- Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. Operands of another scope are not type-checked. The parameters of the rules that build structures (`DataGrid`, `ValueGroups`, `NBClassifier`, …) are declared `Structure(…)` and are registered as `any`, so the calls nested in them are not compared.
 - A declaration the structure scan cannot recognize (for example junk before its type on the same line) is reported as an unknown line, and is not type-checked.
 - Native Khiops checks a date or time format only loosely (length, field positions and separators), so it accepts a few garbled variants of a time or timestamp format, such as `HH:MM:Ss` or `HH.MM ` with a trailing space. The built-in check reports every string outside the documented formats, so it can flag a format that Khiops would load.

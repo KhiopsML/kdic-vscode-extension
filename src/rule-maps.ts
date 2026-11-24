@@ -23,6 +23,11 @@ function parameterType(parameter: string): string {
   return match[1] ? `Block(${match[1]})` : match[2];
 }
 
+/** Whether a parameter or return type is one of the concrete variable types (not `any`, a structure or a block). */
+export function isConcreteType(type: string): boolean {
+  return isKdicType(type) && type !== 'Structure';
+}
+
 /**
  * The type a rule expects at `position` (zero-based). A trailing `...` repeats the parameter before it,
  * but only for a rule whose parameters all have a concrete type: when one is `any` or a structure, the
@@ -31,7 +36,7 @@ function parameterType(parameter: string): string {
 export function parameterTypeAt(types: readonly string[], position: number): string | undefined {
   const varargs = types.indexOf('...');
   if (varargs === -1 || position < varargs) { return types[position]; }
-  const concrete = types.every(type => type === '...' || (isKdicType(type) && type !== 'Structure'));
+  const concrete = types.every(type => type === '...' || isConcreteType(type));
   return concrete && varargs > 0 ? types[varargs - 1] : undefined;
 }
 

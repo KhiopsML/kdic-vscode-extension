@@ -11,8 +11,9 @@
  *  3. structure       — dictionaries and declarations, missing `;`, names   (structure.ts)
  *  4. format metadata — `DateFormat` and co. on the wrong type, or a bad value (format-metadata.ts)
  *  5. constants       — numerical and categorical constants in derivations  (constants.ts)
- *  6. dictionaries    — keys, relation targets, rule return/argument types  (dictionaries.ts)
- *  7. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
+ *  6. dictionaries    — name lengths, key fields, relation targets          (dictionaries.ts)
+ *  7. rule calls      — rule return types and argument types, nested calls  (rule-calls.ts)
+ *  8. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
  */
 import { tokenizeKdic } from './kdic-lexer';
 import { extractDictionaryNames, stripLineComments } from './kdic-syntax';
@@ -24,6 +25,7 @@ import { checkDictionaries } from './validation/dictionaries';
 import { checkFormatMetadata } from './validation/format-metadata';
 import { checkLineGrammar } from './validation/line-grammar';
 import { scanMetadata } from './validation/metadata';
+import { checkRuleCalls } from './validation/rule-calls';
 import { scanStructure } from './validation/structure';
 
 export { Severity } from './validation/diagnostics';
@@ -49,7 +51,8 @@ export function validate(document: KdicDocument, rules: RuleMaps, cursorLine?: n
   checkFormatMetadata(declarations, tokens, metadata, out);
   checkConstants(declarations, tokens, metadata, out);
 
-  const headerLines = checkDictionaries(structure, tokens, extractDictionaryNames(text), rules, out);
+  const headerLines = checkDictionaries(structure, tokens, extractDictionaryNames(text), out);
+  checkRuleCalls(structure, tokens, rules, out);
   checkLineGrammar(stripLineComments(text), metadata, structure, headerLines, out);
   return out.diagnostics;
 }

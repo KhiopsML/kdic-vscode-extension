@@ -30,6 +30,9 @@ const rules = buildRuleMaps([
   { label: 'Sum', returnType: 'Numerical', signature: 'Sum(Numerical value1, ...)' },
   { label: 'Deploy', returnType: 'Categorical', signature: 'Deploy(Structure(Grid) grid, Numerical index, ...)' },
   { label: 'Overloaded', returnType: 'Numerical', signature: 'Overloaded(Categorical key, Categorical target, Numerical rank)' },
+  { label: 'Length', returnType: 'Numerical', signature: 'Length(Categorical value)' },
+  { label: 'Pick', returnType: 'Numerical|Categorical', signature: 'Pick(Numerical index, Categorical value)' },
+  { label: 'Anything', returnType: 'any', signature: 'Anything(Numerical value)' },
 ]);
 
 function diagnosticsFor(text) {
@@ -447,7 +450,6 @@ function testConstantArguments() {
     'Categorical x = Replace("abc", 1, "b", "c");',
     'Numerical x = TableMean(rows, 3);',
     'Numerical x = TableMean(rows, #Missing);',
-    'Numerical x = Sum(number, Sum(1, "a"));', // nested calls are not checked
   ]) {
     assertNoDiagnostics(declaration, document(declaration));
   }
@@ -519,6 +521,70 @@ function testBackquotedVariableArguments() {
   const [undeclared] = diagnostics('Numerical x = Sum(`no such variable`, 1);');
   assert.strictEqual(undeclared.message, "'no such variable' is not declared in this dictionary.");
   assert.strictEqual(undeclared.severity, 1);
+}
+
+function testNestedCalls() {
+  const document = declaration => `Dictionary Records
+{
+    Categorical text;
+    Numerical number;
+    Table(Records) rows;
+    ${declaration}
+};`;
+  const diagnostics = declaration => diagnosticsFor(document(declaration));
+  const messages = declaration => diagnostics(declaration).map(diagnostic => diagnostic.message);
+
+  for (const declaration of [
+    'Numerical x = Sum(number, Length(Concat(text, "b")));',
+    'Numerical x = Sum(number, Sum(number, 1), 3);',
+    'Numerical x = TableCount(TableDifference(rows, rows));',
+    'Numerical x = Sum(Length(text), Pick(1, "a"));',           // a result with several possible types
+    'Categorical x = Concat(Pick(1, "a"), "b");',
+    'Numerical x = Sum(number, Anything(1));',                  // a result of unknown type
+    'Numerical x = TableMean(rows, Sum(unknown, 1));',          // inside a secondary operand, variables are not checked
+    'Numerical x = Sum(TableMean(rows, text), 1);',
+    'Numerical x = Unknown(Sum(number, 1), Sum(undeclared, 2));', // an unknown rule: its operands have no known scope
+    'Numerical x = Sum(number, Sum(number, Sum(number, 1)));',
+  ]) {
+    assertNoDiagnostics(declaration, document(declaration));
+  }
+
+  const result = (nested, type, rule, expected, argument) =>
+    `'${nested}' returns '${type}' but '${rule}' expects '${expected}' for argument ${argument}.`;
+  for (const [declaration, expected] of [
+    ['Numerical x = Sum(number, Concat(text, "b"));', [result('Concat', 'Categorical', 'Sum', 'Numerical', 2)]],
+    ['Categorical x = Concat(text, Sum(number, 1));', [result('Sum', 'Numerical', 'Concat', 'Categorical', 2)]],
+    ['Numerical x = TableCount(Sum(number, 1));', [result('Sum', 'Numerical', 'TableCount', 'Table', 1)]],
+    ['Numerical x = TableCount(TableAt(rows, 1));', [result('TableAt', 'Entity', 'TableCount', 'Table', 1)]],
+    ['Numerical x = TableMean(rows, Concat("a"));', [result('Concat', 'Categorical', 'TableMean', 'Numerical', 2)]], // any scope
+    ['Numerical x = Sum(Concat(text), Concat(text));',
+      [result('Concat', 'Categorical', 'Sum', 'Numerical', 1), result('Concat', 'Categorical', 'Sum', 'Numerical', 2)]],
+    // the calls nested in a nested call are checked with their own parameters
+    ['Numerical x = Sum(number, Sum(Length(number), 1));', ["'number' is 'Numerical' but 'Length' expects 'Categorical' for argument 1."]],
+    ['Numerical x = Sum(number, Sum(1, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
+    ['Numerical x = Unknown(Sum(number, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
+    ['Numerical x = TableMean(rows, Sum(unknown, "a"));', [`Constant "a" is 'Categorical' but 'Sum' expects 'Numerical' for argument 2.`]],
+    // and the return type of the whole derivation, however deeply it is nested
+    ['Categorical x = Sum(number, Sum(number, 1));', ["'Sum' returns 'Numerical' but variable is declared as 'Categorical'."]],
+  ]) {
+    assert.deepStrictEqual(messages(declaration), expected, declaration);
+  }
+
+  // A nested call is current-scope where its parent operand is: its variables are checked.
+  const [undeclared] = diagnostics('Numerical x = Sum(number, Sum(undeclared, 1));');
+  assert.strictEqual(undeclared.message, "'undeclared' is not declared in this dictionary.");
+  assert.strictEqual(undeclared.severity, 1);
+
+  // The diagnostic covers the name of the nested rule.
+  const [mismatch] = diagnostics('Numerical x = Sum(number, Concat(text, "b"));');
+  assert.strictEqual(mismatch.col, '    Numerical x = Sum(number, '.length);
+  assert.strictEqual(mismatch.endCol - mismatch.col, 'Concat'.length);
+
+  // A call that is not closed, as while typing, is not checked; nor is one nested too deeply.
+  assert.ok(!messages('Numerical x = Sum(number, Concat(text);').some(message => message.includes('expects')));
+  assert.ok(!messages('Numerical x = Sum(number, Concat(text, ').some(message => message.includes('expects')));
+  const deep = `Numerical x = ${'Sum(1, '.repeat(150)}"a"${')'.repeat(150)};`;
+  assert.doesNotThrow(() => diagnostics(deep));
 }
 
 function testDictionaryKeysAndNames() {
@@ -612,6 +678,7 @@ function run() {
   testFormatExamples();
   testConstantArguments();
   testBackquotedVariableArguments();
+  testNestedCalls();
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();

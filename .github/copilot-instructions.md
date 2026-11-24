@@ -41,9 +41,10 @@ Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets a
 4. `format-metadata.ts` — `DateFormat`/`TimeFormat`/`TimestampFormat`/`TimestampTZFormat` on a variable
    of another type, without a string value, or with an unknown format
 5. `constants.ts` — numerical and categorical constants inside derivations
-6. `dictionaries.ts` — per dictionary: name lengths, key fields, `Table(X)`/`Entity(X)` targets,
-   rule return types and argument types
-7. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
+6. `dictionaries.ts` — per dictionary: name lengths, key fields, `Table(X)`/`Entity(X)` targets
+7. `rule-calls.ts` — parses each derivation into a tree of calls and checks return types and argument types
+   (variables, constants, and the results of nested calls), tracking whether operands are in the current scope
+8. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
 
 `diagnostics.ts` holds `KdicDocument`, `KdicDiagnostic`, `Severity` and the `DiagnosticCollector`
 the checks report to. All diagnostics are published with `source = 'kdic'`.

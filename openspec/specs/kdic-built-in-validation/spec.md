@@ -9,7 +9,7 @@ Report common structural and type problems while editing a Khiops dictionary, wi
 - Validation is best-effort and structural. It does not claim to be a complete parser: the native Khiops parser remains authoritative for secondary-table scopes, joins, and complex block contents.
 - Language reference: [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/) and [variable blocks](https://khiops.org/api-docs/kdic/intro-block/).
 - `npm test` runs `scripts/validator-test.js` (examples of every requirement below, mostly matching message fragments) plus the editor-document lifecycle tests. `scripts/smoke-test.js` validates every `.kdic` file of a directory; on the local LearningTest corpus (6,177 files) it is the regression reference for false positives.
-- `scripts/vscode-host-tests/` exercises the packaged extension in a real VS Code (see `README.md`): diagnostic positions after edits, save, external changes, and files with isolated carriage returns.
+- `scripts/vscode-host-tests/` exercises the packaged extension in a real VS Code (see `README.md`): diagnostic positions after edits, save, external changes, and files with isolated carriage returns. With `KDIC_VSCODE_CORPUS` set to a directory of real dictionaries, it also checks that each file opened shows exactly the diagnostics of the validator.
 
 ## Requirements
 

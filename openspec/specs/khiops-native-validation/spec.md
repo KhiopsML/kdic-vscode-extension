@@ -7,7 +7,7 @@ Provide diagnostics from the native Khiops parser alongside the built-in KDIC di
 ## Scope and verification
 
 - Khiops is the authority for complete semantic validation. Language reference: [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/).
-- `scripts/khiops-validation-test.js` covers the parsing of Khiops output. The save-time behavior (gating on built-in errors, serialized runs, stale documents, settings changes) is covered by `scripts/vscode-host-tests/`, which uses a mock Khiops executable. Real Khiops runs, process failures, timeouts, and unusual paths are not covered.
+- `scripts/khiops-validation-test.js` covers the parsing of Khiops output. The save-time behavior (gating on built-in errors, serialized runs, stale documents, settings changes) is covered by `scripts/vscode-host-tests/`, which uses a mock Khiops executable. With `KDIC_VSCODE_CORPUS` set, the host tests also run the real Khiops on fixtures, to check that the errors for unknown variables land on the lines that use them and that a dictionary Khiops accepts clears them. Process failures, timeouts, and unusual paths are not covered.
 
 ## Requirements
 
@@ -88,7 +88,8 @@ The extension SHALL turn recognized native error output into VS Code error diagn
 
 #### Scenario: Error names a variable that is not declared
 - **WHEN** captured output contains an error `Variable v not found (in dictionary D)` without a line number
-- **THEN** the corresponding diagnostic is placed on the line of the use of `v` in the derivations of dictionary `D`, the n-th such error of `v` going to its n-th use
+- **THEN** the corresponding diagnostic is placed on the line of the use of `v` that Khiops looks up in dictionary `D`, the n-th such error of `v` going to its n-th use
+- **AND** that is a use in a derivation of `D`, or in a derivation of another dictionary where a table or entity rule's operand is in the table `D` (an aggregation, `TableSelection`, `GetValue*`…), as the built-in validator resolves operands; a `.` before the operand sends it back to the dictionary above
 
 #### Scenario: Error without a line number
 - **WHEN** captured output contains a recognized non-summary error without a line number and it cannot be resolved to a declaration or a use

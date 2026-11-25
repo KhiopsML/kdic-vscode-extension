@@ -62,4 +62,30 @@ assert.deepStrictEqual(parseKhiopsErrorLocations([
   'error : Dictionary my`dict : Variable it`s ok : Derivation rule is invalid',
 ].join('\n'), unknownVariableText).map(location => location.line), [2, 3, 5, 2, 4, 0, 0, 13, 14]);
 
+// An operand that a table rule looks up in the table it points to is placed where it is written,
+// in another dictionary than the one named by the error; a dot sends it back to the dictionary above.
+const secondaryText = [
+  'Root Dictionary Client (id) {',
+  '  Categorical id;',
+  '  Numerical age;',
+  '  Table(Purchase) purchases;',
+  '  Numerical a = Sum(age, ghost);',                                  // line 4: ghost in Client
+  '  Numerical b = TableMean(purchases, ghost);',                      // line 5: ghost in Purchase
+  '  Table(Purchase) c = TableSelection(purchases, GE(amount, .ghost));', // line 6: ghost in Client
+  '  Numerical d = TableCount(TableSelection(purchases, EQ(ghost, 1)));', // line 7: ghost in Purchase
+  '};',
+  'Dictionary Purchase (id) {',
+  '  Categorical id;',
+  '  Numerical amount;',
+  '};',
+].join('\n');
+assert.deepStrictEqual(parseKhiopsErrorLocations([
+  notFound('ghost', 'Client'),
+  notFound('ghost', 'Client'),
+  notFound('ghost', 'Client'), // more errors than uses in Client: falls back to the first
+  notFound('ghost', 'Purchase'),
+  notFound('ghost', 'Purchase'),
+  notFound('ghost', 'Purchase'),
+].join('\n'), secondaryText).map(location => location.line), [4, 6, 4, 5, 7, 5]);
+
 console.log('Khiops output parsing tests passed.');

@@ -221,6 +221,7 @@ exports.run = async function run() {
     await testPlainFile(directory);
     await testIsolatedCarriageReturn(directory);
     await testNativeValidation(directory);
+    if (process.env.KDIC_VSCODE_CORPUS) { await require('./corpus').run(process.env.KDIC_VSCODE_CORPUS, directory); }
     console.log('PASS installed VS Code extension');
   } finally {
     for (const file of fs.readdirSync(directory)) { fs.unlinkSync(path.join(directory, file)); }

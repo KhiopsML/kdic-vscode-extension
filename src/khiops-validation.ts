@@ -5,9 +5,15 @@
  */
 import { isNameToken, tokenName, tokenizeKdic, type KdicToken } from './kdic-lexer';
 import { KdicTextDocument } from './kdic-text-document';
+import { DERIVATION_RULES } from './derivation-rules';
+import { buildRuleMaps } from './rule-maps';
+import { isSymbol } from './validation/call-tree';
 import { DiagnosticCollector } from './validation/diagnostics';
 import { scanMetadata } from './validation/metadata';
-import { scanStructure, type Declaration, type Structure } from './validation/structure';
+import { operandSiteAt } from './validation/operand-site';
+import { scanStructure, type Declaration, type Dictionary, type Structure } from './validation/structure';
+
+const RULES = buildRuleMaps(DERIVATION_RULES);
 
 export interface KhiopsErrorLocation {
   /** Zero-based line of the error in the dictionary file. */
@@ -72,25 +78,47 @@ class ErrorLocator {
   }
 
   /**
-   * The line of the next unreported use of `variableName` in the derivations of `dictionaryName`.
+   * The line of the next unreported use of `variableName` that Khiops looks up in `dictionaryName`: a use
+   * in one of its derivations, or in another dictionary's where a table rule's operand is that table's.
    * Khiops reports every use, in document order, so the n-th error belongs to the n-th use.
    */
   nextReferenceLine(dictionaryName: string, variableName: string): number | undefined {
-    const uses = declarationsOf(this.scan, dictionaryName).flatMap(declaration =>
-      this.derivationTokens(declaration).filter((token, index, derivation) =>
-        isNameToken(token) && tokenName(token) === variableName
-        && derivation[index + 1]?.text !== '(')); // `name(` calls a rule rather than reading a variable
+    const uses = this.scan.structure.dictionaries.flatMap(dictionary =>
+      dictionary.declarations.flatMap(declaration => this.usesOf(declaration, variableName))
+        .filter(index => this.lookedUpIn(dictionary, index) === dictionaryName));
 
     const key = `${dictionaryName}/${variableName}`;
     const placed = this.placedReferences.get(key) ?? 0;
     this.placedReferences.set(key, placed + 1);
     const use = uses[placed] ?? uses[0];
-    return use && this.lineOf(use);
+    return use === undefined ? undefined : this.lineOf(this.scan.tokens[use]);
   }
 
-  /** The tokens after the `=` of a declaration's derivation, or none for a declaration without one. */
-  private derivationTokens({ equalsIndex, endIndex }: Declaration): KdicToken[] {
-    return equalsIndex === undefined || endIndex === undefined ? [] : this.scan.tokens.slice(equalsIndex + 1, endIndex);
+  /** The indices of the tokens in a declaration's derivation that read the variable `variableName`. */
+  private usesOf({ equalsIndex, endIndex }: Declaration, variableName: string): number[] {
+    if (equalsIndex === undefined || endIndex === undefined) { return []; }
+    const { tokens } = this.scan;
+    const uses: number[] = [];
+    for (let index = equalsIndex + 1; index < endIndex; index++) {
+      if (isNameToken(tokens[index]) && tokenName(tokens[index]) === variableName
+        && !isSymbol(tokens[index + 1], '(')) { // `name(` calls a rule rather than reading a variable
+        uses.push(index);
+      }
+    }
+    return uses;
+  }
+
+  /**
+   * The name of the dictionary Khiops looks up the operand at token `index` in: the one its rule resolves it
+   * in (with the dots of the scope operator in front of it), else the dictionary it is written in.
+   */
+  private lookedUpIn(dictionary: Dictionary, index: number): string | undefined {
+    const { tokens, structure } = this.scan;
+    let start = index;
+    while (isSymbol(tokens[start - 1], '.')) { start--; }
+    const scope = operandSiteAt(structure, tokens, RULES, tokens[start].start, index - start)?.scope;
+    const name = (scope?.dictionary ?? dictionary).header.name;
+    return name && tokenName(name);
   }
 
   private lineOf(token: KdicToken): number {

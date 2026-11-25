@@ -5,6 +5,8 @@ import type { BlockTail, Declaration, Dictionary, Structure } from './structure'
 
 /** The variables an operand can name, with how a message calls the dictionary that declares them. */
 export interface Scope {
+  /** The dictionary that declares the variables. */
+  dictionary: Dictionary;
   variables: ReadonlyMap<string, Declaration>;
   /** The variable blocks, which an operand can name as a whole. */
   blocks: ReadonlyMap<string, BlockTail>;
@@ -40,7 +42,7 @@ function scopeOf(dictionary: Dictionary, label: string, context: ScopeContext, p
     };
     context.names.set(dictionary, names);
   }
-  return { ...names, label, parent };
+  return { ...names, dictionary, label, parent };
 }
 
 /** The scope of the operands written in a dictionary, outside any table rule. */

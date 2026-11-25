@@ -183,6 +183,8 @@ KDIC_VSCODE_TEST_EXTENSIONS="$test_dir/extensions" "/Applications/Visual Studio 
 
 The temporary profile and packaged extension remain in `test_dir` for inspection.
 
+To also check the extension on a directory of real dictionaries (for example the `LearningTest` corpus), set `KDIC_VSCODE_CORPUS` to it in the environment of the second command. Each `.kdic` file is opened, never saved, and the diagnostics VS Code shows must be those of the built-in validator; the real Khiops binary is then run on a few fixtures to check that its errors land on the right lines. It takes about ten minutes for 3,300 files. Rebuild and reinstall the packaged extension first: the test runs the installed copy, not the sources.
+
 ### Project structure
 
 | Path | Content |

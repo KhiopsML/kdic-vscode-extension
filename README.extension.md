@@ -102,6 +102,7 @@ Use `Ctrl+Space` or `Cmd+Space` to request completions. Hover over a keyword, ty
 
 - VS Code 1.79 or later
 - Khiops is optional for built-in language support and required only for native validation
+- The built-in checks follow the documentation of **Khiops 11.0.2** published on khiops.org. Native validation uses the Khiops you installed, whatever its version.
 
 ## Links
 

@@ -110,6 +110,26 @@ Automated tests: `npm test`. VS Code host tests: see `README.md`.
   reference); **Warning** for unrecognised lines and undeclared argument-variable references.
 - Keep modules free of `vscode` unless they need it, and every function short and commented.
 
+## Khiops version of reference
+
+The built-in checks, the rule catalogue and the READMEs follow the documentation published on khiops.org, that is
+**Khiops 11.0.2** (checked on 2026-11-25). It is the `KHIOPS_VERSION` of the web site build, "the version of the
+Khiops package as documented on the web site", in `environment.env` of `KhiopsML/khiops-doc`:
+`gh api repos/KhiopsML/khiops-doc/contents/environment.env --jq .content | base64 -d | grep KHIOPS_VERSION`
+(the published site may lag behind `main`).
+
+The Khiops binary, not the web site, is the authority on behavior, and the site is incomplete: measure on the binary
+before writing a rule. The names, `VarKey` and multi-table schema rules were measured on Khiops 11.0.3-a.0 (a
+pre-release); the corpus (`corpus-expectations.json`) was checked with the same binary.
+
+**Before creating a tag or a new version** (`npm version`, `vsce package` or publish, a GitHub release), check that version:
+1. Read the version above again. If khiops.org now documents a newer Khiops, read what changed in its dictionary pages
+   (dictionary files, derivation rules, metadata, variable blocks, multi-table schemas) and update `DERIVATION_RULES`,
+   the types, the metadata keys and the checks to match.
+2. Run the corpus check with a Khiops binary of that version: `node scripts/smoke-test.js --expected corpus-expectations.json`,
+   then `--update-expected` for what changed. No error may be reported on a file that Khiops accepts.
+3. Write the new version in `README.md` (twice), `README.extension.md` and in this section.
+
 ## Temporary workarounds
 
 - **`overrides.minimatch` in `package.json`** (added 2026-11-25): `@vscode/vsce` 4.1.1 depends on

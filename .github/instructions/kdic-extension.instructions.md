@@ -8,6 +8,10 @@ applyTo: "src/**"
 See `.github/copilot-instructions.md` for the module map. Only `extension.ts`, `language-features.ts`,
 `diagnostics-controller.ts` and `carriage-returns.ts` may import `vscode`.
 
+The reference is the Khiops version documented on khiops.org (section "Khiops version of reference" of
+`.github/copilot-instructions.md`, with what to check before a tag or a new version). The Khiops binary is the
+authority on behavior: measure a rule on it before writing it.
+
 ## Adding a derivation rule
 
 Append one entry to `DERIVATION_RULES` in `src/derivation-rules.ts`. **No other change is needed** —

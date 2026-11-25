@@ -94,3 +94,14 @@ Automated tests: `npm test`. VS Code host tests: see `README.md`.
 - Diagnostic severity: **Error** for definite violations (type mismatch, missing `;`, unknown
   reference); **Warning** for unrecognised lines and undeclared argument-variable references.
 - Keep modules free of `vscode` unless they need it, and every function short and commented.
+
+## Temporary workarounds
+
+- **`overrides.minimatch` in `package.json`** (added 2026-11-25): `@vscode/vsce` 4.1.1 depends on
+  `minimatch@^10.2.6`, which `npm audit` flags (GHSA-g3hv-75wg-m249, fixed in 11.0.1). The override forces
+  `^11.0.1`; vsce is a dev-only packaging tool, so the real exposure is nil. **Remove it** once an
+  `@vscode/vsce` release depends on `minimatch` ≥ 11.0.1 (`npm view @vscode/vsce dist-tags`, `npm view
+  @vscode/vsce@<version> dependencies.minimatch`): drop the `overrides` block, run `npm install`, then check
+  that `npm audit` reports nothing and `npm run package` still works. Do not downgrade vsce to 3.9.x: it pulls
+  `glob@11`, which brings the same vulnerable `minimatch`. When working on dependencies or packaging,
+  check whether this override can go.

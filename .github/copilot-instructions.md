@@ -37,15 +37,26 @@ Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets a
 
 1. `delimiters.ts` — unclosed / unmatched / wrongly nested `()`, `[]`, `{}`
 2. `metadata.ts` — locates `<key>`, `<key=value>` tags and reports malformed ones
-3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers, declarations and
-   the names of their variable blocks); reports missing `;` and invalid variable names
+3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers with the `Root`
+   keyword, declarations with their `[key]` and whether they are in a variable block, and the variable blocks with
+   their members and the `;` of their tail); reports missing `;`, invalid variable names, a word after a name and
+   a statement that does not start with a type
 4. `format-metadata.ts` — `DateFormat`/`TimeFormat`/`TimestampFormat`/`TimestampTZFormat` on a variable
    of another type, without a string value, or with an unknown format
-5. `constants.ts` — numerical and categorical constants inside derivations
-6. `dictionaries.ts` — per dictionary: name lengths, key fields, `Table(X)`/`Entity(X)` targets
-7. `rule-calls.ts` — parses each derivation into a tree of calls and checks return types and argument types
+5. `variable-blocks.ts` — `VarKey` of each block member (present, integer 1 to 10⁹ or non-empty string, one kind,
+   unique) and the default value of the block
+6. `constants.ts` — numerical and categorical constants inside derivations
+7. `dictionaries.ts` — per dictionary: name lengths, names used twice (variables and blocks), spaces at the end of
+   names, dictionaries declared twice, key fields, `Table(X)`/`Entity(X)` targets
+8. `relations.ts` — multi-table schema: root key, root as a component, key lengths along native relations,
+   external entities (`[key]`)
+9. `rule-calls.ts` — parses each derivation into a tree of calls and checks return types and argument types
    (variables, constants, and the results of nested calls), tracking the dictionary each operand is resolved in (current, or that of the table of a table/entity rule)
-8. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
+10. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
+
+Every rule of `variable-blocks.ts`, `relations.ts` and the name checks was measured on the Khiops binary before it
+was written (a dictionary that Khiops accepts must give no error here). To keep that true, run the corpus scan
+(`--update-expected` lists the files with an error that Khiops accepts; it must stay empty) after changing a check.
 
 `diagnostics.ts` holds `KdicDocument`, `KdicDiagnostic`, `Severity` and the `DiagnosticCollector`
 the checks report to. All diagnostics are published with `source = 'kdic'`.
@@ -81,7 +92,11 @@ npm run watch     # tsc -watch -p ./  (incremental)
 ```
 
 Press **F5** in VS Code to launch an Extension Development Host.
-Smoke test: `node scripts/smoke-test.js [--errors-only] [directory]` (requires `npm run compile`).
+Smoke test: `node scripts/smoke-test.js [--errors-only] [directory]` (requires `npm run compile`). The known
+diagnostics of the LearningTest corpus are in `corpus-expectations.json`: check a change against them with
+`--expected corpus-expectations.json`, and accept it with `--update-expected corpus-expectations.json`
+(`scripts/corpus-expectations.js`; it keeps the Khiops verdicts and notes, and asks Khiops about new files). Before
+accepting a change, make sure every new *error* is a file that Khiops rejects too.
 Automated tests: `npm test`. VS Code host tests: see `README.md`.
 
 ## Key conventions

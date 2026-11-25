@@ -83,7 +83,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "test": "npm run compile && node scripts/validator-test.js && node scripts/carriage-returns-test.js && node scripts/completion-context-test.js && node scripts/completion-test.js && node scripts/operand-completion-test.js && node scripts/khiops-validation-test.js",
+    "test": "npm run compile && node scripts/validator-test.js && node scripts/carriage-returns-test.js && node scripts/completion-context-test.js && node scripts/completion-test.js && node scripts/operand-completion-test.js && node scripts/khiops-validation-test.js && node scripts/corpus-expectations-test.js",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --readme-path README.extension.md",
     "smoke-test": "node scripts/smoke-test.js",

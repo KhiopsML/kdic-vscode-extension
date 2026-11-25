@@ -48,6 +48,8 @@ Pick the module by what the check needs:
 |---|---|
 | tokens only (delimiters, metadata, constants) | the matching file, or a new `src/validation/<name>.ts` |
 | dictionaries / declarations / header | `dictionaries.ts` (reads the `Structure` built by `structure.ts`) |
+| keys and relations between dictionaries (key lengths, root dictionaries, external entities) | `relations.ts` |
+| variable blocks (`VarKey`, default values) | `variable-blocks.ts` (the members and tail of each block are in `dictionary.blocks`) |
 | rule calls in derivations (argument and result types, scopes) | `rule-calls.ts` (parses each derivation into a call tree) |
 | whole-line text | `line-grammar.ts` |
 

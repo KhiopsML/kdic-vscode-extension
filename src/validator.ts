@@ -10,10 +10,12 @@
  *  2. metadata        — `<key=value>` tags                                  (metadata.ts)
  *  3. structure       — dictionaries and declarations, missing `;`, names   (structure.ts)
  *  4. format metadata — `DateFormat` and co. on the wrong type, or a bad value (format-metadata.ts)
- *  5. constants       — numerical and categorical constants in derivations  (constants.ts)
- *  6. dictionaries    — name lengths, key fields, relation targets          (dictionaries.ts)
- *  7. rule calls      — rule return types and argument types, nested calls  (rule-calls.ts)
- *  8. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
+ *  5. variable blocks — `VarKey` of each member, default values of the block   (variable-blocks.ts)
+ *  6. constants       — numerical and categorical constants in derivations  (constants.ts)
+ *  7. dictionaries    — names, key fields, relation targets                 (dictionaries.ts)
+ *  8. relations       — root keys, key lengths of the dictionaries reached  (relations.ts)
+ *  9. rule calls      — rule return types and argument types, nested calls  (rule-calls.ts)
+ * 10. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
  */
 import { tokenizeKdic } from './kdic-lexer';
 import { extractDictionaryNames, stripLineComments } from './kdic-syntax';
@@ -25,8 +27,10 @@ import { checkDictionaries } from './validation/dictionaries';
 import { checkFormatMetadata } from './validation/format-metadata';
 import { checkLineGrammar } from './validation/line-grammar';
 import { scanMetadata } from './validation/metadata';
+import { checkRelations } from './validation/relations';
 import { checkRuleCalls } from './validation/rule-calls';
 import { scanStructure } from './validation/structure';
+import { checkVariableBlocks } from './validation/variable-blocks';
 
 export { Severity } from './validation/diagnostics';
 export type { KdicDiagnostic, KdicDocument } from './validation/diagnostics';
@@ -49,9 +53,11 @@ export function validate(document: KdicDocument, rules: RuleMaps, cursorLine?: n
   const structure = scanStructure(tokens, metadata, out, cursorLine);
   const declarations = structure.dictionaries.flatMap(dictionary => dictionary.declarations);
   checkFormatMetadata(declarations, tokens, metadata, out);
+  checkVariableBlocks(structure, tokens, metadata, out);
   checkConstants(declarations, tokens, metadata, out);
 
   const headerLines = checkDictionaries(structure, tokens, extractDictionaryNames(text), out);
+  checkRelations(structure, out);
   checkRuleCalls(structure, tokens, rules, out);
   checkLineGrammar(stripLineComments(text), metadata, structure, headerLines, out);
   return out.diagnostics;

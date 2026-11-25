@@ -21,6 +21,8 @@ export interface MetadataInfo {
   lines: Set<number>;
   /** The tags that are well-formed; malformed ones are reported by `scanMetadata` and left out. */
   tags: MetadataTag[];
+  /** The same tags by the index of their `<`. */
+  tagByStart: Map<number, MetadataTag>;
 }
 
 /** Tokens that can never be part of a tag: they end a malformed one. */
@@ -31,7 +33,7 @@ const TAG_TERMINATORS = ['>', '<', ';', '{', '}'];
  * A valid tag is `<key>`, `<key=number>` or `<key="string">`.
  */
 export function scanMetadata(tokens: readonly KdicToken[], out: DiagnosticCollector): MetadataInfo {
-  const info: MetadataInfo = { tokenIndices: new Set(), ranges: [], lines: new Set(), tags: [] };
+  const info: MetadataInfo = { tokenIndices: new Set(), ranges: [], lines: new Set(), tags: [], tagByStart: new Map() };
 
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
@@ -60,7 +62,9 @@ export function scanMetadata(tokens: readonly KdicToken[], out: DiagnosticCollec
     if (!closed || !validKey || !validValue) {
       out.at(token.start, 1, 'Invalid or unclosed metadata.');
     } else {
-      info.tags.push({ first: index, last: end, key: content[0], value: content[2] });
+      const tag = { first: index, last: end, key: content[0], value: content[2] };
+      info.tags.push(tag);
+      info.tagByStart.set(index, tag);
     }
 
     const last = closed ? end : end - 1;
@@ -71,4 +75,11 @@ export function scanMetadata(tokens: readonly KdicToken[], out: DiagnosticCollec
     index = last;
   }
   return info;
+}
+
+/** The tags written right after the token at `index`: those of a declaration follow its `;`. */
+export function tagsAfter(metadata: MetadataInfo, index: number): MetadataTag[] {
+  const found: MetadataTag[] = [];
+  for (let tag = metadata.tagByStart.get(index + 1); tag; tag = metadata.tagByStart.get(tag.last + 1)) { found.push(tag); }
+  return found;
 }

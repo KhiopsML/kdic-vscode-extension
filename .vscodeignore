@@ -7,3 +7,4 @@ src/**
 scripts/**
 tsconfig.json
 package-lock.json
+corpus-expectations.json

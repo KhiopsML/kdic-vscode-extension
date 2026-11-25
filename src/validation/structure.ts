@@ -15,6 +15,12 @@ export interface Declaration {
   nameIndex: number;
   /** `X` of a `Table(X)` or `Entity(X)` type. */
   relationTarget?: KdicToken;
+  /** The key of an external entity, `Entity(X) name [key, …]`, one token per key, as `[a, f(b)]` has two; undefined when the name has no brackets. */
+  joinKeys?: KdicToken[];
+  /** Whether the variable is declared inside a variable block. */
+  inBlock: boolean;
+  /** The word written after the name where `;` is expected, which makes the declaration malformed. */
+  wordAfterName?: KdicToken;
   /** Index of the `=` of the derivation, if any. */
   equalsIndex?: number;
   /** Index of the terminating `;`, or of the token that ended the declaration when `;` is missing. */
@@ -26,8 +32,12 @@ export interface BlockTail {
   name: KdicToken;
   /** Name without backticks. */
   nameText: string;
+  /** The variables declared inside the block. */
+  members: Declaration[];
   /** Index of the `=` of the derivation, if any. */
   equalsIndex?: number;
+  /** Index of the `;` that ends the tail: the block's metadata tags follow it. */
+  endIndex?: number;
 }
 
 /** The parsed `Root Dictionary Name (key, …)` header of a dictionary. */
@@ -36,6 +46,8 @@ export interface DictionaryHeader {
   keyword?: KdicToken;
   name?: KdicToken;
   keys: KdicToken[];
+  /** Whether the keyword is preceded by `Root`. */
+  root: boolean;
   /** Whether the header is exactly `[…] Dictionary Name [(key, …)]`. */
   valid: boolean;
 }
@@ -60,6 +72,8 @@ export interface Structure {
   dictionaries: Dictionary[];
   /** Lines covered by a declaration that ends with `;`. */
   declarationLines: Set<number>;
+  /** Lines whose statement starts with a word that is not a type: already reported as an error. */
+  rejectedLines: Set<number>;
   /** Lines holding the `;` that follows a dictionary's closing brace. */
   terminatorLines: Set<number>;
 }
@@ -87,7 +101,7 @@ function parseHeader(tokens: readonly KdicToken[]): DictionaryHeader {
     else { next++; }
   }
   if (next !== tokens.length) { valid = false; }
-  return { keyword, name, keys, valid };
+  return { keyword, name, keys, root: keywordIndex > 0 && tokens[keywordIndex - 1].text === 'Root', valid };
 }
 
 /**
@@ -121,16 +135,55 @@ function relationTargetAt(tokens: readonly KdicToken[], typeIndex: number): Kdic
   return isRelation && open?.text === '(' && isNameToken(target) && close?.text === ')' ? target : undefined;
 }
 
+/** The keys of an external entity, `[k1, f(k2)]` written at `index`: the first token of each key; undefined when there is no bracket there. */
+function joinKeysAt(tokens: readonly KdicToken[], index: number): KdicToken[] | undefined {
+  if (tokens[index]?.text !== '[') { return undefined; }
+  const keys: KdicToken[] = [];
+  let depth = 0;
+  let startsKey = true;
+  for (let next = index + 1; next < tokens.length; next++) {
+    const token = tokens[next];
+    if (depth === 0 && (token.text === ']' || token.text === ';')) { break; }
+    if (depth === 0 && token.text === ',') { startsKey = true; continue; }
+    if (startsKey) { keys.push(token); startsKey = false; }
+    if (token.text === '(') { depth++; } else if (token.text === ')') { depth--; }
+  }
+  return keys;
+}
+
+/**
+ * A statement of a dictionary starts with a type, or with `Unused` and then a type. Khiops rejects any other word
+ * there: a keyword that is misspelled (`Categorial`, `Unuset`, `numerical`), a word before the type (`Foo Numerical x;`)
+ * or after `Unused`. `Root` and `Dictionary` are left to the checks of the braces, as they mean a missing `}`.
+ */
+function checkStatementStart(tokens: readonly KdicToken[], index: number, out: DiagnosticCollector): KdicToken | undefined {
+  const token = tokens[index];
+  if (!isNameLike(token) || token.text === 'Root' || token.text === 'Dictionary') { return undefined; }
+
+  const afterUnused = token.text === 'Unused';
+  const word = afterUnused ? tokens[index + 1] : token;
+  if (!isNameLike(word) || isKdicType(word!.text)) { return undefined; }
+  const reason = afterUnused ? "'Unused' must be followed by one" : "a declaration starts with 'Unused' or a type";
+  out.atToken(word!, `'${tokenName(word!)}' is not a type: ${reason}.`);
+  return word;
+}
+
 /** Whether the name written right after a type cannot be a valid variable name. */
 function isInvalidVariableName(name: KdicToken, next: KdicToken | undefined): boolean {
   const decoded = tokenName(name);
   const touchesNext = next !== undefined && next.start === name.end;
   const badFollowingSymbol = touchesNext && next.kind === 'symbol' && ![';', '=', '[', '}'].includes(next.text);
   const badFollowingNumber = touchesNext && (next.kind === 'number' || next.kind === 'missing');
-  // Two names in a row (`Categorical bad name;`) unless the second one starts the next declaration.
-  const secondName = isNameLike(next) && next!.text !== 'Unused' && !isKdicType(next!.text);
   return name.closed === false || decoded.length === 0 || decoded.trim() !== decoded
-    || badFollowingSymbol || badFollowingNumber || secondName;
+    || badFollowingSymbol || badFollowingNumber;
+}
+
+/**
+ * The word that follows a variable name where `;` or `=` is expected (`Categorical bad name;`), unless it starts the
+ * next declaration. Khiops takes any word, keywords included, as the name, and objects to the one after it.
+ */
+function wordAfterName(next: KdicToken | undefined): KdicToken | undefined {
+  return isNameLike(next) && next!.text !== 'Unused' && !isKdicType(next!.text) ? next : undefined;
 }
 
 /**
@@ -147,7 +200,7 @@ export function scanStructure(
   out: DiagnosticCollector,
   cursorLine: number | undefined,
 ): Structure {
-  const structure: Structure = { dictionaries: [], declarationLines: new Set(), terminatorLines: new Set() };
+  const structure: Structure = { dictionaries: [], declarationLines: new Set(), terminatorLines: new Set(), rejectedLines: new Set() };
   const document = out.document;
   const lineOf = (token: KdicToken): number => out.lineOf(token.start);
 
@@ -158,6 +211,10 @@ export function scanStructure(
   let afterBlockClose = false;
   // The tail being read after a variable block's `}`, once its name is seen.
   let blockTail: BlockTail | undefined;
+  // The variables declared in the variable block being read, which its tail takes over.
+  let blockMembers: Declaration[] = [];
+  // Whether the next token starts a statement: right after a `{` or a `;` that ends one.
+  let statementStart = false;
   let pending: Declaration | undefined;
   let headerStart = 0;
   let dictionary: Dictionary | undefined;
@@ -195,6 +252,8 @@ export function scanStructure(
           structure.dictionaries.push(dictionary);
         }
         braceDepth++;
+        if (braceDepth === 2) { blockMembers = []; }
+        statementStart = true;
         groupDepth = 0;
         continue;
       }
@@ -212,6 +271,7 @@ export function scanStructure(
         }
         afterBlockClose = braceDepth > 1;
         blockTail = undefined;
+        statementStart = false;
         braceDepth = Math.max(0, braceDepth - 1);
         groupDepth = 0;
         continue;
@@ -233,15 +293,22 @@ export function scanStructure(
       }
       pending = undefined;
       afterBlockClose = false;
+      statementStart = true;
+      if (blockTail) { blockTail.endIndex = index; }
       blockTail = undefined;
       continue;
     }
     if (afterBlockClose) {
       if (!blockTail && isNameLike(token)) {
-        blockTail = { name: token, nameText: tokenName(token) };
+        blockTail = { name: token, nameText: tokenName(token), members: blockMembers };
         dictionary!.blocks.push(blockTail);
       }
       continue;
+    }
+    if (statementStart && !pending) {
+      statementStart = false;
+      const rejected = checkStatementStart(tokens, index, out);
+      if (rejected) { structure.rejectedLines.add(lineOf(rejected)); }
     }
 
     // Does a declaration start here?
@@ -262,12 +329,17 @@ export function scanStructure(
     const typeIndex = index + (token.text === 'Unused' ? 1 : 0);
     const declaration: Declaration = {
       start: token, type: tokens[typeIndex], name, nameText: tokenName(name), nameIndex,
-      relationTarget: relationTargetAt(tokens, typeIndex),
+      relationTarget: relationTargetAt(tokens, typeIndex), joinKeys: joinKeysAt(tokens, nameIndex + 1), inBlock: braceDepth === 2,
+      wordAfterName: wordAfterName(tokens[nameIndex + 1]),
     };
     pending = declaration;
     dictionary!.declarations.push(declaration);
+    if (declaration.inBlock) { blockMembers.push(declaration); }
     if (isInvalidVariableName(name, tokens[nameIndex + 1])) {
       out.atToken(name, 'Invalid variable name.');
+    } else if (declaration.wordAfterName) {
+      out.atToken(declaration.wordAfterName,
+        `Unexpected '${tokenName(declaration.wordAfterName)}' after variable name '${declaration.nameText}': ';' expected. A name with spaces needs backquotes.`);
     }
   }
   endWithoutSemicolon(tokens.length);

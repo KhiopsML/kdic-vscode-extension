@@ -66,6 +66,17 @@ Real-time diagnostics for derivation rule calls, including the calls nested in o
   > `Numerical id;` in a `Dictionary Foo (id)` → error on `Numerical`
 - **Unknown dictionary reference**: `Table(X)` or `Entity(X)` where dictionary `X` is not declared anywhere in the file.
   > `Table(Burbu) vehicles;` → error on `Burbu`
+- **Word after a variable name**: a second word where `;` is expected. Any word, a keyword included, is a valid name, so the error is on the second one.
+  > ``Date Categorical `DAT_DEB_ENG` ;`` → error on `DAT_DEB_ENG`
+- **Statement that does not start with a type**: a misspelled type or `Unused`, a word before the type, or a word that is not a type after `Unused`. Other lines that no pattern recognizes are only warnings, since an error would stop Khiops from running on save.
+  > `Categorial Name;`, `Unuset Numerical x;`, `Unused TargetTable Entity(T) t;` → error on the word that is not a type
+- **Names used twice**: two variables, a variable and a variable block, two blocks or two dictionaries with the same name (case matters).
+  > `Numerical Age;` twice in a dictionary → error on the second `Age`
+- **Space at the end of a name**: a dictionary or block name between backquotes that starts or ends with a space.
+- **Variable block keys**: each member of a block needs a `VarKey`, an integer between 1 and 1,000,000,000 or a non-empty string, of the same kind in the whole block and not used twice; `DefaultNumericalValue` and `DefaultCategoricalValue` must fit the type of the block.
+  > `Numerical Words1; <VarKey=1>` and `Numerical Words2; <VarKey=1>` in one block → error on the second `1`
+- **Multi-table keys**: a `Root` dictionary has a key; a root is not the target of an internal relation; along `Table(X)` and `Entity(X)` relations the key of `X` is not shorter than that of the dictionary that holds the variable, and is longer when a `Table` leads to a dictionary that has relations of its own; an external entity `Entity(X) name [key]` points to a root dictionary, with as many keys.
+  > `Root Dictionary Customer (Id)` with `Table(Usage) Usages;` where `Usage` has no key → error on `Usage`
 - **Derived key field**: fields listed in a dictionary's key must not be derived from a rule.
 - **Undeclared key field**: every dictionary key must refer to a declared variable.
 - **Name length**: dictionary and variable names are limited to 128 characters.
@@ -202,6 +213,15 @@ To also check the extension on a directory of real dictionaries (for example the
 
 `.github/copilot-instructions.md` describes the modules and the validation pipeline in more detail.
 Run `node scripts/smoke-test.js [--errors-only] [directory]` after `npm run compile` to validate every `.kdic` file of a directory.
+
+The Khiops test corpus (LearningTest, kept outside this repository) is the regression reference. [corpus-expectations.json](corpus-expectations.json) lists the files of that corpus that have diagnostics: for each, the exact diagnostics, whether the Khiops binary itself accepts or rejects the file, and an optional note. Pass it to the smoke test:
+
+```bash
+node scripts/smoke-test.js --expected corpus-expectations.json [directory]         # report only what changed (exit 1 if anything did)
+node scripts/smoke-test.js --update-expected corpus-expectations.json [directory]  # rewrite it; Khiops is run on the files it does not know yet
+```
+
+A file that Khiops accepts and that has a built-in *error* is a false positive of the validator, to fix or to explain in its `note`. Paths are relative to the corpus directory, and the default directory is `~/Dev/LearningTest`.
 
 ### Package as `.vsix`
 

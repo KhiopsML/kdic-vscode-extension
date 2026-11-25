@@ -2,7 +2,7 @@ import { formatDocumentationUrl, isValidFormat } from '../date-time-formats';
 import type { KdicToken } from '../kdic-lexer';
 import { FORMAT_METADATA_KEYS } from '../kdic-syntax';
 import type { DiagnosticCollector } from './diagnostics';
-import type { MetadataInfo, MetadataTag } from './metadata';
+import { tagsAfter, type MetadataInfo, type MetadataTag } from './metadata';
 import type { Declaration } from './structure';
 
 /** The type each format key belongs to: `DateFormat` → `Date`. */
@@ -44,11 +44,8 @@ export function checkFormatMetadata(
   metadata: MetadataInfo,
   out: DiagnosticCollector,
 ): void {
-  const tagAt = new Map(metadata.tags.map(tag => [tag.first, tag]));
   for (const declaration of declarations) {
     if (declaration.endIndex === undefined || tokens[declaration.endIndex]?.text !== ';') { continue; }
-    for (let tag = tagAt.get(declaration.endIndex + 1); tag; tag = tagAt.get(tag.last + 1)) {
-      checkFormatTag(declaration, tag, out);
-    }
+    for (const tag of tagsAfter(metadata, declaration.endIndex)) { checkFormatTag(declaration, tag, out); }
   }
 }

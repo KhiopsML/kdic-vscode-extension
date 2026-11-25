@@ -8,7 +8,7 @@ Report common structural and type problems while editing a Khiops dictionary, wi
 
 - Validation is best-effort and structural. It does not claim to be a complete parser: the native Khiops parser remains authoritative for secondary-table scopes, joins, and complex block contents.
 - Language reference: [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/) and [variable blocks](https://khiops.org/api-docs/kdic/intro-block/).
-- `npm test` runs `scripts/validator-test.js` (examples of every requirement below, mostly matching message fragments) plus the editor-document lifecycle tests. `scripts/smoke-test.js` validates every `.kdic` file of a directory; on the local LearningTest corpus (6,177 files) it is the regression reference for false positives.
+- `npm test` runs `scripts/validator-test.js` (examples of every requirement below, mostly matching message fragments) plus the editor-document lifecycle tests. `scripts/smoke-test.js` validates every `.kdic` file of a directory; on the local LearningTest corpus (3,362 files) it is the regression reference, with `corpus-expectations.json` recording the known diagnostics and whether Khiops itself rejects each file.
 - `scripts/vscode-host-tests/` exercises the packaged extension in a real VS Code (see `README.md`): diagnostic positions after edits, save, external changes, and files with isolated carriage returns. With `KDIC_VSCODE_CORPUS` set to a directory of real dictionaries, it also checks that each file opened shows exactly the diagnostics of the validator.
 
 ## Requirements
@@ -52,8 +52,13 @@ The validator SHALL report structural errors and warn about unrecognized lines, 
 - **THEN** the validator does not report an imbalance solely because of the line breaks
 
 #### Scenario: Unknown line
-- **WHEN** a nonempty, non-continuation line does not match the applicable structural patterns
-- **THEN** the validator reports a warning
+- **WHEN** a nonempty, non-continuation line does not match the applicable structural patterns, and is not reported as a statement that does not start with a type (below)
+- **THEN** the validator reports a warning: the patterns are not a full grammar, and an error would stop Khiops from running on save
+
+#### Scenario: Statement that does not start with a type
+- **WHEN** a statement of a dictionary or of a variable block starts with a word that is not a type (a misspelled `Categorial`, `Unuset` or `numerical`, a word before the type as in `Foo Numerical x;`, a stray word), or with `Unused` followed by a word that is not a type
+- **THEN** the validator reports an error on that word, and no unknown-line warning on its line
+- **AND** `Root` and `Dictionary` there are left to the checks of the braces, and the first word of a derivation that continues on a following line is not a statement start
 
 #### Scenario: Editing an unfinished declaration
 - **WHEN** a declaration without a semicolon is on the last line or the active cursor line
@@ -112,6 +117,27 @@ The validator SHALL validate key-field declarations and names, and check recogni
 - **WHEN** a dictionary key names a variable that is not declared in that dictionary
 - **THEN** the validator reports an error identifying the missing key field
 
+#### Scenario: Names used twice
+- **WHEN** a name is used by two variables of a dictionary (a block member counts, `Unused` and backquotes do not matter, case does), by a variable and a variable block, or by two variable blocks; or two dictionaries have the same name
+- **THEN** the validator reports an error on the second use
+- **AND** the same name in two dictionaries, or names that differ by their case, are not reported
+
+#### Scenario: Space at the end of a name
+- **WHEN** a dictionary name, a variable block name or the name of the dictionary in `Table(X)` or `Entity(X)` starts or ends with a space (written between backquotes)
+- **THEN** the validator reports an error; a space inside a name is accepted
+
+#### Scenario: Keys of the multi-table schema
+- **WHEN** a `Root` dictionary has no key, or a native relation (`Table(X)` or `Entity(X)`, without `[key]`, without a derivation, outside a variable block, `Unused` or not) has a root dictionary as its target
+- **THEN** the validator reports an error
+- **WHEN** a dictionary is a root or is reached from a root through native relations, and the dictionary of one of its native relations has no key, has a key shorter than its own, or has the same key length while the relation is a `Table` and that dictionary has native relations of its own
+- **THEN** the validator reports an error on the target of the relation
+- **AND** an `Entity` relation does not need the longer key, and dictionaries not reached from a root are not checked
+
+#### Scenario: External entity
+- **WHEN** a variable has a key between brackets, `Entity(X) name [key, …]`
+- **THEN** the validator reports an error if it is not an `Entity`, if `X` is not a root dictionary, or if the number of keys (each of which may be a computed expression) differs from that of `X`
+- **AND** an external entity is not part of the key hierarchy above
+
 #### Scenario: Unknown relation
 - **WHEN** a recognized `Table(Phantom)` variable references a dictionary not declared in the document
 - **THEN** the validator reports an unknown-dictionary error
@@ -127,6 +153,11 @@ The validator SHALL validate key-field declarations and names, and check recogni
 #### Scenario: Invalid variable name
 - **WHEN** a variable name uses characters requiring backticks without valid quoting, or its backtick-quoted form is unterminated
 - **THEN** the validator reports a name syntax error
+
+#### Scenario: Word after a variable name
+- **WHEN** a declaration has a second word where `;` or `=` is expected, as in `Categorical bad name;` or `Date Categorical `X` ;`
+- **THEN** the validator reports an error on that second word
+- **AND** any word, a keyword such as `Categorical`, `Unused` or `Root` included, is a valid variable name, as for Khiops: the first word is not reported as an invalid name, and a name repeated by such declarations is not reported as used twice
 
 ### Requirement: Files with isolated carriage returns
 VS Code turns every carriage return of a file into a line break in the editor, while KDIC (like Khiops) treats only `\n` as a line break: an isolated `\r` can be part of quoted text. The editor text of such a file no longer matches the file, so the built-in validator SHALL NOT report diagnostics for it. Native Khiops, which reads the real file, remains the authority.
@@ -176,6 +207,19 @@ The validator SHALL check recognized variable-block members and closing declarat
 #### Scenario: Derived member or unnamed block
 - **WHEN** a recognized block member has an individual derivation, or the block closes without a name and semicolon
 - **THEN** the validator reports the corresponding error, positioned on the offending text
+
+#### Scenario: Block closing with blanks
+- **WHEN** a block closes with `} Name ;`, blanks (spaces or tabs) between the name and the semicolon, with or without a derivation and with metadata after the semicolon, as Khiops writes it
+- **THEN** the validator reports nothing
+
+#### Scenario: Key of each member
+- **WHEN** a member of a variable block has no `VarKey` tag, a `VarKey` that is a number outside 1 to 1,000,000,000 or not an integer, an empty string, a kind (integer or string) different from the first key of the block, or a value already used by another member of the same block
+- **THEN** the validator reports an error on the member or on the value
+- **AND** the same key in two different blocks, a `VarKey` outside a block, and a `<VarKey>` without a value are not reported
+
+#### Scenario: Default value of a block
+- **WHEN** the tags after the closing `;` of a block of `Numerical` variables hold `DefaultNumericalValue` with something other than a number, or `DefaultCategoricalValue`; or those of a block of `Categorical` variables hold `DefaultCategoricalValue` with a number, or `DefaultNumericalValue`
+- **THEN** the validator reports an error on the tag; blocks of other or mixed types are not checked
 
 ### Requirement: Derivation type checks
 The validator SHALL compare the rule calls of derivations (`= rule(arg, …)`), including the calls nested in their arguments, with registered rule types, without claiming complete derivation analysis. A variable argument SHALL be looked up in the dictionary where its scope resolves it: the current dictionary, or, for an operand documented as secondary, the dictionary that the first operand's `Table(X)` or `Entity(X)` points to. An operand whose scope is not known SHALL NOT be checked against any dictionary.
@@ -290,9 +334,19 @@ The smoke-test CLI SHALL validate `.kdic` files recursively using the compiled v
 - **WHEN** the compiled validator or target directory does not exist
 - **THEN** the CLI reports the problem and exits with status 2
 
+#### Scenario: Comparison with the known diagnostics of a corpus
+- **WHEN** the CLI runs with `--expected <file>`, a JSON file listing, by path relative to the directory, the exact diagnostics of each file that has some
+- **THEN** it reports the files whose diagnostics differ (new, changed, no longer having any), ignores the entries of files that are not in the directory, and exits with status 1 if anything differs, otherwise 0
+- **AND** `--errors-only` cannot be combined with it, nor can `--update-expected`; a missing file or option value exits with status 2
+
+#### Scenario: Updating the known diagnostics
+- **WHEN** the CLI runs with `--update-expected <file>`
+- **THEN** it rewrites the file from the current diagnostics, keeping the Khiops verdict and the note of the files already listed and the entries of files that are not in the directory
+- **AND** for each file it does not know yet it runs the Khiops binary and records `rejects` or `accepts` (`unknown` when Khiops is not found or takes too long), then lists the files that have an error although Khiops accepts them
+
 ## Known limitations
 
-- The official variable-block reference requires a `VarKey` for each member. The built-in checks do not enforce its presence, uniqueness, or validity.
+- Variable blocks whose members are `Table` variables, blocks derived by a rule, and the rules that read or build a block (`CopyBlock`, `DataGridBlock`, `TablePartition…`) are not checked beyond the keys above: that the rule and its input blocks agree on the `VarKey` type and values is left to Khiops.
 - Joins and the complete grammar are not validated; a constant behind a dot, which Khiops rejects, is not reported; absence of a diagnostic does not establish Khiops validity.
 - The `#Khiops` header line and dictionary metadata are accepted as structural patterns; their exact compatibility with native Khiops is not established.
 - Rule signatures are registered one per rule: a rule that exists with different parameter lists is only checked when called with all the registered parameters. The operand scopes of a rule are registered only for the table and entity rules that were measured on Khiops (`operandScopes`); the operands of the others, such as `TableModeAt`, `TableUnion` or `GetEntity`, are not type-checked. The parameters of the rules that build structures (`DataGrid`, `ValueGroups`, `NBClassifier`, …) are declared `Structure(…)` and are registered as `any`, so the calls nested in them are not compared.

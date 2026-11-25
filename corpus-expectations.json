@@ -1,0 +1,519 @@
+{
+  "about": "Known diagnostics of the corpus given to scripts/smoke-test.js, by path relative to it. \"khiops\" tells whether the Khiops binary itself accepts or rejects the file (\"unknown\" when it could not be run); \"note\" is free text. Check with --expected <this file>, regenerate with --update-expected <this file>: the verdicts and notes already here are kept.",
+  "files": {
+    "TestKhiops/Advanced/ExportMetaData/IrisMetaData.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:24 error Invalid or unclosed metadata."
+      ]
+    },
+    "TestKhiops/Advanced/TestTabulation/IrisTab.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:14 error Invalid variable name.",
+        "9:14 error Invalid variable name."
+      ]
+    },
+    "TestKhiops/Bugs/BuildDicoReadFailure/dictionary.kdic": {
+      "khiops": "accepts",
+      "diagnostics": [
+        "22:1 warning Line does not match kdic grammar. Use // for non-kdic content."
+      ]
+    },
+    "TestKhiops/Bugs/DicoBadType/BadType.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "4:2 error 'G' returns 'Numerical' but variable is declared as 'Categorical'.",
+        "10:62 error 'Left' returns 'Categorical' but 'GE' expects 'Numerical' for argument 1.",
+        "10:67 warning 'Callers' is not declared in this dictionary.",
+        "11:64 error 'Left' returns 'Categorical' but 'GE' expects 'Numerical' for argument 1."
+      ]
+    },
+    "TestKhiops/Bugs/DicoDataGrid/Transco.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "10:4 error 'CellIndex' returns 'Numerical' but variable is declared as 'Categorical'.",
+        "11:4 error 'CellIndex' returns 'Numerical' but variable is declared as 'Categorical'.",
+        "12:4 error 'CellIndex' returns 'Numerical' but variable is declared as 'Categorical'."
+      ]
+    },
+    "TestKhiops/Bugs/DicoSpecialChars/DicoSpecialChars.kdic": {
+      "khiops": "accepts",
+      "diagnostics": [
+        "1:2 warning Line does not match kdic grammar. Use // for non-kdic content."
+      ]
+    },
+    "TestKhiops/Bugs/DicoSpecialMetaData/MetaDataForbiden1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:22 error Invalid or unclosed metadata."
+      ]
+    },
+    "TestKhiops/Bugs/DicoSpecialMetaData/MetaDataForbiden2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:22 error Invalid or unclosed metadata."
+      ]
+    },
+    "TestKhiops/BugsMultiTables/BugReadWrongDictionary/WrongDic.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:15 error Dictionary 'df_photo' is not declared in this file.",
+        "7:102 error 'MOIS_PHOTO' is 'Categorical' but 'WeekDay' expects 'Date' for argument 1."
+      ]
+    },
+    "TestKhiops/BugsMultiTables/BugReadWrongDictionary/WrongDicLarge.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "36:19 error Unexpected 'DAT_DEB_ENG' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "37:19 error Unexpected 'DAT_DEM_RES' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "38:19 error Unexpected 'DAT_DER_CNX' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "39:19 error Unexpected 'DAT_FER_CPT' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "40:19 error Unexpected 'DAT_FIN_ENG_PREVU' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "41:19 error Unexpected 'DAT_FIN_ENG_REEL' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "42:19 error Unexpected 'DAT_NAISSANCE' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "43:19 error Unexpected 'DAT_OUV_ADSL2' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "44:19 error Unexpected 'DAT_OUV_ADSLRE' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "45:19 error Unexpected 'DAT_OUV_CPT' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "46:19 error Unexpected 'DAT_OUV_MLTV' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "47:19 error Unexpected 'DAT_OUV_NET' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "48:19 error Unexpected 'DAT_OUV_SDSL' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "49:19 error Unexpected 'DAT_PRE_CNX' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "188:8 error 'TargetTable' is not a type: 'Unused' must be followed by one.",
+        "189:2 error 'TargetVariable' is not a type: a declaration starts with 'Unused' or a type.",
+        "211:18 error Unexpected 'HEURE_DEB_CRU' after variable name 'Numerical': ';' expected. A name with spaces needs backquotes.",
+        "212:20 error Unexpected 'JOUR_DEB_CRU' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "225:20 error Unexpected 'DAT_DEB_EDP' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "226:20 error Unexpected 'DAT_FIN_EDP' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "293:20 error Unexpected 'COD_MOIS' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "295:20 error Unexpected 'DAT_DEB_FACT' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "311:20 error Unexpected 'DAT_CNT' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "312:20 error Unexpected 'DAT_CRE_AFF' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "313:20 error Unexpected 'DAT_FER_AFF' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "329:20 error Unexpected 'MOIS_PHOTO' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "343:20 error Unexpected 'DAT_DERN_VISITE' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes.",
+        "115:15 error Dictionary 'facturation' is not declared in this file.",
+        "116:15 error Dictionary 'interaction' is not declared in this file.",
+        "117:15 error Dictionary 'photo' is not declared in this file.",
+        "118:15 error Dictionary 'df_photo' is not declared in this file.",
+        "119:15 error Dictionary 'df_photo' is not declared in this file.",
+        "120:15 error Dictionary 'df_photo' is not declared in this file.",
+        "121:15 error Dictionary 'df_photo' is not declared in this file.",
+        "122:15 error Dictionary 'df_photo' is not declared in this file.",
+        "123:15 error Dictionary 'df_photo' is not declared in this file.",
+        "124:15 error Dictionary 'df_photo' is not declared in this file.",
+        "125:15 error Dictionary 'df_photo' is not declared in this file.",
+        "126:15 error Dictionary 'df_photo' is not declared in this file.",
+        "127:15 error Dictionary 'df_photo' is not declared in this file.",
+        "128:15 error Dictionary 'df_photo' is not declared in this file.",
+        "129:15 error Dictionary 'df_photo' is not declared in this file.",
+        "130:15 error Dictionary 'df_photo' is not declared in this file.",
+        "131:15 error Dictionary 'df_photo' is not declared in this file.",
+        "132:15 error Dictionary 'df_cru' is not declared in this file.",
+        "133:15 error Dictionary 'df_cru' is not declared in this file.",
+        "134:15 error Dictionary 'df_cru' is not declared in this file.",
+        "135:15 error Dictionary 'df_cru' is not declared in this file.",
+        "136:15 error Dictionary 'df_cru' is not declared in this file.",
+        "137:15 error Dictionary 'df_cru' is not declared in this file.",
+        "138:15 error Dictionary 'df_cru' is not declared in this file.",
+        "139:15 error Dictionary 'df_edp' is not declared in this file.",
+        "140:15 error Dictionary 'df_edp' is not declared in this file.",
+        "141:15 error Dictionary 'df_edp' is not declared in this file.",
+        "142:15 error Dictionary 'df_edp' is not declared in this file.",
+        "143:15 error Dictionary 'df_edp' is not declared in this file.",
+        "144:15 error Dictionary 'df_edp' is not declared in this file.",
+        "145:15 error Dictionary 'df_edp' is not declared in this file.",
+        "146:15 error Dictionary 'df_edp' is not declared in this file.",
+        "147:15 error Dictionary 'df_edp' is not declared in this file.",
+        "148:15 error Dictionary 'df_edp' is not declared in this file.",
+        "149:15 error Dictionary 'df_edp' is not declared in this file.",
+        "150:15 error Dictionary 'df_edp' is not declared in this file.",
+        "151:15 error Dictionary 'df_edp' is not declared in this file.",
+        "152:15 error Dictionary 'df_edp' is not declared in this file.",
+        "153:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "154:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "155:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "156:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "157:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "158:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "159:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "160:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "161:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "162:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "163:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "164:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "165:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "166:15 error Dictionary 'df_facturation' is not declared in this file.",
+        "167:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "168:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "169:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "170:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "171:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "172:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "173:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "174:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "175:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "176:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "177:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "178:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "179:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "180:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "181:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "182:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "183:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "184:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "185:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "186:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "187:15 error Dictionary 'df_interaction' is not declared in this file.",
+        "132:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "133:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "134:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "135:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "136:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "137:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "138:98 warning 'JOUR_DEB_CRU' is not declared in dictionary 'cru'.",
+        "139:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "140:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "141:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "142:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "143:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "144:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "145:97 warning 'DAT_DEB_EDP' is not declared in dictionary 'edp'.",
+        "146:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "147:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "148:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "149:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "150:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "151:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "152:97 warning 'DAT_FIN_EDP' is not declared in dictionary 'edp'.",
+        "189:55 warning 'TargetTable' is not declared in this dictionary.",
+        "290:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "302:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "326:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "414:1 warning Line does not match kdic grammar. Use // for non-kdic content."
+      ]
+    },
+    "TestKhiops/BugsMultiTables/BugRefreshMultiTableMaping/ComplexDataErrors.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "4:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "5:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "6:2 error 'ObjectArray' is not a type: a declaration starts with 'Unused' or a type.",
+        "7:2 error 'Object' is not a type: a declaration starts with 'Unused' or a type.",
+        "8:2 error 'Continuous' is not a type: a declaration starts with 'Unused' or a type.",
+        "13:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "14:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "15:2 error 'Object' is not a type: a declaration starts with 'Unused' or a type.",
+        "16:2 error 'ObjectArray' is not a type: a declaration starts with 'Unused' or a type.",
+        "17:2 error 'Continuous' is not a type: a declaration starts with 'Unused' or a type.",
+        "22:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "23:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "24:2 error 'Object' is not a type: a declaration starts with 'Unused' or a type.",
+        "25:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "26:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "27:2 error 'Continuous' is not a type: a declaration starts with 'Unused' or a type.",
+        "32:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "33:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "34:2 error 'Continuous' is not a type: a declaration starts with 'Unused' or a type.",
+        "39:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "40:2 error 'Continuous' is not a type: a declaration starts with 'Unused' or a type.",
+        "41:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "42:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "43:2 error 'Object' is not a type: a declaration starts with 'Unused' or a type.",
+        "48:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "49:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "50:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "51:2 error 'Object' is not a type: a declaration starts with 'Unused' or a type.",
+        "56:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "57:2 error 'Symbol' is not a type: a declaration starts with 'Unused' or a type.",
+        "8:40 warning 'Services' is not declared in this dictionary.",
+        "17:38 warning 'Usages' is not declared in this dictionary.",
+        "1:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "2:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "11:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "20:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "30:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "37:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "46:1 warning Line does not match kdic grammar. Use // for non-kdic content.",
+        "54:1 warning Line does not match kdic grammar. Use // for non-kdic content."
+      ]
+    },
+    "TestKhiops/BugsMultiTables/BugTableRules/ComplexData.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "9:58 error 'Product' is 'Entity' but 'EQc' expects 'Categorical' for argument 1.",
+        "10:58 error 'Product' is 'Entity' but 'EQc' expects 'Categorical' for argument 1.",
+        "10:67 error 'Duration' is 'Numerical' but 'EQc' expects 'Categorical' for argument 2."
+      ]
+    },
+    "TestKhiops/MultiTables/CD_Snowflake/Snowflake4.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "10:8 error The key of dictionary 'RootE_Table' (1) must be longer than that of its parent dictionary 'RootEntity' (1), as it has relation variables of its own."
+      ]
+    },
+    "TestKhiops/MultiTables/CD_Snowflake/Snowflake5.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "10:8 error The key of dictionary 'RootE_Table' (1) must be longer than that of its parent dictionary 'RootEntity' (1), as it has relation variables of its own."
+      ]
+    },
+    "TestKhiops/MultiTables/DataPathCheck/ComplexData_KO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "26:17 error Dictionary name 'Customer ' must not start or end with a space."
+      ]
+    },
+    "TestKhiops/MultiTables/DataPathCheck/ComplexData_KO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "29:14 error Invalid variable name.",
+        "30:17 error Invalid variable name.",
+        "31:18 error Invalid variable name.",
+        "32:40 warning 'Services' is not declared in this dictionary."
+      ]
+    },
+    "TestKhiops/Rules/MSIrisScopeError/IrisScopeError1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:39 error Scope operator '.' goes beyond the depth of the calling rules."
+      ]
+    },
+    "TestKhiops/Rules/MSIrisScopeError/IrisScopeError2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:32 error Scope operator '.' goes beyond the depth of the calling rules.",
+        "7:46 error Scope operator '.' goes beyond the depth of the calling rules."
+      ]
+    },
+    "TestKhiops/Rules/MSSpliceJunction/SpliceJunctionMultipleScopeWrong.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "10:44 error Scope operator '..' goes beyond the depth of the calling rules.",
+        "11:48 error 'Zero' is 'Numerical' but 'TableCountDistinct' expects 'Categorical' for argument 2.",
+        "12:44 error Scope operator '..' goes beyond the depth of the calling rules."
+      ]
+    },
+    "TestKhiops/Rules/NumericalConstants/NumericalConstantsWrong2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "6:23 error Scope operator '.' goes beyond the depth of the calling rules."
+      ]
+    },
+    "TestKhiops/Rules/NumericalConstants/NumericalConstantsWrong3.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "6:23 error Invalid numerical constant."
+      ]
+    },
+    "TestKhiops/SparseData/EntitySparseBlockAdvanced/RootMolecules_MultiScopeWrongScope.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "24:39 error Scope operator '..' goes beyond the depth of the calling rules."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:12 error Meta-data VarKey must be specified for variable 'PetalLength' of a variable block."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:7 error Meta-data VarKey must be specified for variable 'PetalLength' of a variable block.",
+        "7:2 error Variable block members must be Numerical, Categorical, or Table."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO4.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:22 error Variable block members cannot be derived individually."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO5.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "10:12 error Variable name 'SepalWidth' is already used by a variable.",
+        "11:12 error Variable name 'PetalLength' is already used by a variable.",
+        "12:6 error Variable block name 'Tokens' is already used by a variable block."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO6.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:35 error Meta-data VarKey \"SW\" is already used by variable 'SepalWidth' of the block."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO8.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "9:4 error Variable block name 'SepalWidth' is already used by a variable."
+      ]
+    },
+    "TestKhiops/SparseData/IrisSparseDic/IrisSparseKO9.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "12:14 error Variable name 'Tokens' is already used by a variable block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "4:12 error Meta-data VarKey must be specified for variable 'AsCount' of a variable block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic10.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:30 error Meta-data VarKey 1 is already used by variable 'AsCount' of the block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic11.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "6:31 error Meta-data VarKey must be between 1 and 1,000,000,000."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "5:30 error Meta-data VarKey must be an integer, like the other keys of the block.",
+        "6:31 error Meta-data VarKey must be an integer, like the other keys of the block.",
+        "7:30 error Meta-data VarKey must be an integer, like the other keys of the block.",
+        "8:31 error Meta-data VarKey must be an integer, like the other keys of the block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic3.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:31 error Meta-data VarKey must be a string, like the other keys of the block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic4.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:30 error Meta-data VarKey \"1\" is already used by variable 'AsCount' of the block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic5.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:30 error Meta-data VarKey \"1\" is already used by variable 'AsCount' of the block.",
+        "9:41 error Meta-data 'DefaultNumericalValue' needs a numerical value."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic6.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:30 error Meta-data VarKey \"1\" is already used by variable 'AsCount' of the block.",
+        "9:19 error Meta-data 'DefaultCategoricalValue' does not apply to a block of 'Numerical' variables."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic7.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "4:12 error Meta-data VarKey must be specified for variable 'AsCount' of a variable block."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic8.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "6:31 error Meta-data VarKey must be between 1 and 1,000,000,000."
+      ]
+    },
+    "TestKhiops/SparseData/ReadWriteSparseFormatWrongKeys/WrongSparseNativeDic9.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "6:31 error Meta-data VarKey must be an integer.",
+        "7:30 error Meta-data VarKey must be an integer."
+      ]
+    },
+    "TestKhiops/SparseData/TablePartitionRules/ComplexDataTiny.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "23:2 error Variable block must have a name and ';' after its closing brace."
+      ]
+    },
+    "TestKhiops/SparseModeling/CellIndexBlock/CellIndexBlockKO3.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "20:76 error Constant \"1\" is 'Categorical' but 'ValueSet' expects 'Numerical' for argument 1.",
+        "20:81 error Constant \"2\" is 'Categorical' but 'ValueSet' expects 'Numerical' for argument 2.",
+        "20:86 error Constant \"3\" is 'Categorical' but 'ValueSet' expects 'Numerical' for argument 3.",
+        "20:91 error Constant \"4\" is 'Categorical' but 'ValueSet' expects 'Numerical' for argument 4."
+      ]
+    },
+    "TestKhiops/SparseModeling/CellIndexBlock/CellIndexBlockKO6.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "12:44 error Meta-data VarKey 4 is already used by variable 'PetalLengthCopy' of the block."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildEntityFromJson/CustomerJsonKO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "11:8 error Dictionary 'Contact' must have a key, as the target of Entity variable 'contact'.",
+        "12:7 error Dictionary 'Hobby' must have a key, as the target of Table variable 'hobbies'.",
+        "13:7 error Dictionary 'Product' must have a key, as the target of Table variable 'products'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildList/SpliceJunctionKO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "6:8 error The key of dictionary 'SpliceJunctionDNA' (1) must be longer than that of its parent dictionary 'SpliceJunction' (1), as it has relation variables of its own.",
+        "16:9 error Dictionary 'SpliceJunctionDNANode' must have a key, as the target of Entity variable 'Forbidden'.",
+        "22:9 error Dictionary 'SpliceJunctionDNANode' must have a key, as the target of Entity variable 'Prev'.",
+        "23:9 error Dictionary 'SpliceJunctionDNANode' must have a key, as the target of Entity variable 'Next'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/NoKeyInCreatedSnowflake/Snowflake_KO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:8 error The key of dictionary 'Service' (1) must be longer than that of its parent dictionary 'Customer' (1), as it has relation variables of its own."
+      ]
+    },
+    "TestKhiops/TableCreationRules/NoKeyInCreatedSnowflake/Snowflake_KO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "22:8 error The key of dictionary 'Usage' (1) must not be shorter than that of its parent dictionary 'Service' (2)."
+      ]
+    },
+    "TestKhiops/TableCreationRules/NoKeyInCreatedSnowflake/Snowflake_KO3.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:8 error The key of dictionary 'Service' (2) must be longer than that of its parent dictionary 'Customer' (2), as it has relation variables of its own."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableAdvancedViewErrors/SpliceJunction_KO10.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:8 error The key of dictionary 'SpliceJunctionDNA' (1) must be longer than that of its parent dictionary 'SpliceJunction' (1), as it has relation variables of its own."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableAdvancedViewErrors/SpliceJunction_KO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "9:47 warning 'DNAExtended' is not declared in this dictionary."
+      ]
+    },
+    "TestKhiops/z_Work/NoKeyInCreatedSnowflake/Snowflake_KO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:8 error The key of dictionary 'Service' (1) must be longer than that of its parent dictionary 'Customer' (1), as it has relation variables of its own."
+      ]
+    },
+    "TestKhiops/z_Work/NoKeyInCreatedSnowflake/Snowflake_KO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "22:8 error The key of dictionary 'Usage' (1) must not be shorter than that of its parent dictionary 'Service' (2)."
+      ]
+    },
+    "TestKhiops/z_Work/NoKeyInCreatedSnowflake/Snowflake_KO3.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "7:8 error The key of dictionary 'Service' (2) must be longer than that of its parent dictionary 'Customer' (2), as it has relation variables of its own."
+      ]
+    }
+  }
+}

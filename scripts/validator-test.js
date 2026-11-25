@@ -189,11 +189,15 @@ function testKeyAndMissingSemicolonDiagnostics() {
 }
 
 function testStructuralBoundaries() {
-  const unknownLine = diagnosticsFor('Dictionary Records\n{\n not a declaration\n};');
+  // A statement that starts with a word that is not a type is an error, reported once, without the unknown-line warning.
+  const notAType = word => [[0, `'${word}' is not a type: a declaration starts with 'Unused' or a type.`]];
+  const summary = text => diagnosticsFor(text).map(d => [d.severity, d.message]);
+  assert.deepStrictEqual(summary('Dictionary Records\n{\n not a declaration\n};'), notAType('not'));
+  assert.deepStrictEqual(summary('Dictionary Records\n{\n Symbol Date;\n};'), notAType('Symbol'));
+  // Anything else that no pattern recognizes stays a warning: the grammar is only a set of patterns.
+  const unknownLine = diagnosticsFor('Dictionary Records\n{\n 12 apples;\n};');
   assert.ok(unknownLine.some(d => d.severity === 1 && d.message.includes('Line does not match kdic grammar')));
-  const legacyLine = diagnosticsFor('Dictionary Records\n{\n Symbol Date;\n};');
-  assert.ok(legacyLine.some(d => d.severity === 1 && d.message.includes('Line does not match kdic grammar')));
-  assert.ok(!legacyLine.some(d => d.message.includes('Invalid variable name')));
+  assert.ok(!unknownLine.some(d => d.severity === 0));
 
   assertDiagnostic('unclosed dictionary', `Dictionary Records
 {
@@ -216,7 +220,7 @@ function testStructuralBoundaries() {
     Categorical id;
 };`);
 
-  assertNoDiagnostics('balanced multiline nested delimiters', `Dictionary Records
+  assertNoDiagnostics('balanced multiline nested delimiters', `Root Dictionary Records
 (id) {
     Categorical id;
     Entity(Records) ref [
@@ -248,6 +252,18 @@ function testVariableBlocks() {
         Numerical archive; <VarKey=1>
         Numerical name; <VarKey=2>
     } Words;
+};`);
+
+  // Khiops writes `}<tab>Name<tab>;`, with block metadata after the semicolon.
+  assertNoDiagnostics('variable block closed with blanks before the semicolon', `Dictionary Document
+{
+\tCategorical id;
+\t{
+\tNumerical archive\t; <VarKey=1>
+\t}\tWords\t; <DefaultNumericalValue=0>
+\t{
+\tNumerical other; <VarKey=1>
+\t} \`Other words\` = CopyBlock(Words) ;
 };`);
 
   assertDiagnostic('mixed variable-block types', `Dictionary Document
@@ -626,9 +642,9 @@ Dictionary Purchase
   // The dictionary a table points to is not declared: only that is reported, not the operand.
   assert.deepStrictEqual(messages('Table(Missing) lost;\n    Numerical x = TableMean(lost, anything);'),
     ["Dictionary 'Missing' is not declared in this file."]);
-  // Several dictionaries with the name: which one is meant is not known.
-  assertNoDiagnostics('duplicate dictionary', document('Numerical x = TableMean(purchases, anything);',
-    '\nDictionary Purchase\n{\n    Numerical other;\n};'));
+  // Several dictionaries with the name: which one is meant is not known, so only the duplicate is reported.
+  assert.deepStrictEqual(messages('Numerical x = TableMean(purchases, anything);', '\nDictionary Purchase\n{\n    Numerical other;\n};'),
+    ["Dictionary 'Purchase' is declared more than once."]);
 
   const mismatch = (name, actual, rule, expected, argument) =>
     `'${name}' is '${actual}' but '${rule}' expects '${expected}' for argument ${argument}.`;
@@ -742,7 +758,15 @@ function testDictionaryKeysAndNames() {
   assertDiagnostic('name ending with numeric punctuation', 'Dictionary Records\n{\n Categorical bad-1;\n};', 'Invalid variable name');
   assertDiagnostic('numeric variable name', 'Dictionary Records\n{\n Unused Categorical 123;\n};', 'Invalid variable name');
   assertNoDiagnostics('type or modifier used as a variable name', 'Dictionary Records\n{\n Categorical Unused;\n Numerical Text;\n};');
-  assertDiagnostic('unquoted name with spaces', 'Dictionary Records\n{\n Categorical bad name;\n};', 'Invalid variable name');
+  assertDiagnostic('unquoted name with spaces', 'Dictionary Records\n{\n Categorical bad name;\n};', "Unexpected 'name' after variable name 'bad'");
+
+  // A keyword is a valid name for Khiops, which objects to the word after it. The word is reported, once per
+  // declaration, and the repeated name is not taken for a duplicate.
+  const extraWord = diagnosticsFor('Dictionary Records\n{\n\tDate\tCategorical\t`A`\t;\n\tDate\tCategorical\t`B`\t;\n};');
+  assert.deepStrictEqual(extraWord.map(d => [d.line, d.col, d.endCol, d.message]), [
+    [2, 'Date\tCategorical\t'.length + 1, 'Date\tCategorical\t'.length + 4, "Unexpected 'A' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes."],
+    [3, 'Date\tCategorical\t'.length + 1, 'Date\tCategorical\t'.length + 4, "Unexpected 'B' after variable name 'Categorical': ';' expected. A name with spaces needs backquotes."],
+  ]);
   assertDiagnostic('unclosed quoted name', 'Dictionary Records\n{\n Categorical `bad\n};', 'Invalid variable name');
   assertDiagnostic('empty quoted name', 'Dictionary Records\n{\n Categorical ``;\n};', 'Invalid variable name');
   assertDiagnostic('quoted name with leading space', 'Dictionary Records\n{\n Categorical ` bad`;\n};', 'Invalid variable name');
@@ -805,6 +829,172 @@ Dictionary Achat
   noArgumentDiagnostic('Entity(Achat) result = TableAt(achats, absent);', 'absent');
 }
 
+/** Dictionary text for the schema tests: the key fields are declared, `body` follows. */
+const dictionaryText = (name, keys, body = '', root = false) =>
+  `${root ? 'Root ' : ''}Dictionary ${name}${keys.length ? ` (${keys.join(', ')})` : ''}\n{\n${keys.map(key => `  Categorical ${key};`).join('\n')}\n${body}\n};`;
+
+function testDuplicateAndEdgeSpaceNames() {
+  const messages = text => diagnosticsFor(text).map(diagnostic => diagnostic.message);
+  const block = (member, tail) => `{\n  Numerical ${member}; <VarKey=1>\n} ${tail};`;
+  const inDictionary = body => `Dictionary D\n{\n${body}\n};`;
+
+  for (const [name, body, expected] of [
+    ['two variables', 'Numerical a;\nCategorical a;', ["Variable name 'a' is already used by a variable."]],
+    ['a name written with and without backquotes', 'Numerical a;\nNumerical `a`;', ["Variable name 'a' is already used by a variable."]],
+    ['an Unused variable', 'Numerical a;\nUnused Numerical a;', ["Variable name 'a' is already used by a variable."]],
+    ['a block member and a variable', `Numerical x;\n${block('x', 'B')}`, ["Variable name 'x' is already used by a variable."]],
+    ['a variable then a block', `Numerical a;\n${block('x', 'a')}`, ["Variable block name 'a' is already used by a variable."]],
+    ['a block then a variable', `${block('x', 'a')}\nNumerical a;`, ["Variable name 'a' is already used by a variable block."]],
+    ['two blocks', `${block('x', 'B')}\n${block('y', 'B')}`, ["Variable block name 'B' is already used by a variable block."]],
+    ['a block name with a space at its end', block('x', '`B `'), ["Variable block name 'B ' must not start or end with a space."]],
+    ['names that differ by their case', 'Numerical a;\nNumerical A;', []],
+    ['the same name in two blocks', `${block('x', 'B1')}\n${block('y', 'B2')}`, []],
+  ]) {
+    assert.deepStrictEqual(messages(inDictionary(body)), expected, name);
+  }
+
+  assert.deepStrictEqual(messages('Dictionary D\n{\n Numerical a;\n};\nDictionary D\n{\n Numerical b;\n};'),
+    ["Dictionary 'D' is declared more than once."]);
+  assert.deepStrictEqual(messages('Dictionary D\n{\n Numerical a;\n};\nDictionary E\n{\n Numerical a;\n};'), [], 'the same variable in two dictionaries');
+  assert.deepStrictEqual(messages('Dictionary `D `\n{\n Numerical a;\n};'), ["Dictionary name 'D ' must not start or end with a space."]);
+  assert.deepStrictEqual(messages('Dictionary ` D`\n{\n Numerical a;\n};'), ["Dictionary name ' D' must not start or end with a space."]);
+  assert.deepStrictEqual(messages('Dictionary `D E`\n{\n Numerical a;\n};'), [], 'a space inside a name');
+  assert.deepStrictEqual(messages('Dictionary `D `\n{\n Numerical a;\n};\nDictionary E\n{\n Table(`D `) t;\n};'),
+    ["Dictionary name 'D ' must not start or end with a space.", "Referenced dictionary name 'D ' must not start or end with a space."]);
+}
+
+function testRelationSchema() {
+  const messages = (...dictionaries) => diagnosticsFor(dictionaries.join('\n')).map(diagnostic => diagnostic.message);
+  const [K, K2, K3] = [['K'], ['K', 'K2'], ['K', 'K2', 'K3']];
+  const shorter = (child, cn, parent, pn) => `The key of dictionary '${child}' (${cn}) must not be shorter than that of its parent dictionary '${parent}' (${pn}).`;
+  const longer = (child, cn, parent, pn) => `The key of dictionary '${child}' (${cn}) must be longer than that of its parent dictionary '${parent}' (${pn}), as it has relation variables of its own.`;
+
+  // A root dictionary has a key and is no component; the key of a component is not shorter than its parent's.
+  assert.deepStrictEqual(messages(dictionaryText('P', [], '', true)), ["Root dictionary 'P' must have a key."]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Entity(C) c;', true), dictionaryText('C', K, '', true)),
+    ["Dictionary 'C' is a root dictionary: it cannot be the target of a Entity variable, unless the variable has a key between brackets."]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K2, '  Table(C) t;', true), dictionaryText('C', K)), [shorter('C', 1, 'P', 2)]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', [])),
+    ["Dictionary 'C' must have a key, as the target of Table variable 't'."]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', K2)), [], 'a longer key');
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', K)), [], 'a leaf with the same key');
+
+  // Under a Table, a dictionary with relations of its own needs a longer key; under an Entity it does not. Unused counts.
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', K, '  Table(E) u;'), dictionaryText('E', K2)),
+    [longer('C', 1, 'P', 1)]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', K, '  Unused Entity(E) u;'), dictionaryText('E', K2)),
+    [longer('C', 1, 'P', 1)]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Entity(C) t;', true), dictionaryText('C', K, '  Table(E) u;'), dictionaryText('E', K2)), []);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', K2, '  Table(E) u;'), dictionaryText('E', K3)), []);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true), dictionaryText('C', K2, '  Table(E) u;'), dictionaryText('E', K)),
+    [shorter('E', 1, 'C', 2)]);
+
+  // Only the dictionaries reached from a root are checked, and only through native relations.
+  assert.deepStrictEqual(messages(dictionaryText('P', K2, '  Table(C) t;'), dictionaryText('C', K)), [], 'not reached from a root');
+  assert.deepStrictEqual(messages(dictionaryText('P', K2, '  Table(C) t = TableSelection(t, GE(a, 1));', true), dictionaryText('C', K)).filter(message => message.startsWith('The key')), [], 'a derived relation');
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) t;', true),
+    dictionaryText('C', K, '  {\n    Table(E) v; <VarKey=1>\n  } B = Rule(t);'), dictionaryText('E', [])).filter(message => message.includes('key')), [],
+  'a variable of a block is not a component');
+
+  // An external entity refers to a root dictionary, with as many keys as it has; they may be computed.
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Entity(C) c [K];', true), dictionaryText('C', K, '', true)), []);
+  assert.deepStrictEqual(messages(dictionaryText('P', K2, '  Entity(C) c [K];', true), dictionaryText('C', K, '', true)), [], 'no hierarchy for an external entity');
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Entity(C) c [Concat("", K)];', true), dictionaryText('C', K, '', true)), [], 'a computed key');
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Entity(C) c [K];', true), dictionaryText('C', K)),
+    ["Dictionary 'C' must be a root dictionary, as the target of external entity 'c'."]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Entity(C) c [K];', true), dictionaryText('C', K2, '', true)),
+    ["External entity 'c' has 1 key field(s), but dictionary 'C' has 2."]);
+  assert.deepStrictEqual(messages(dictionaryText('P', K, '  Table(C) c [K];', true), dictionaryText('C', K, '', true)),
+    ["Variable 'c' has a key between brackets: it must be an 'Entity'."]);
+}
+
+function testVariableBlockKeys() {
+  const messages = (members, tail = 'B;', type = 'Numerical') => diagnosticsFor(
+    `Dictionary D\n{\n  {\n${members.map((tags, index) => `    ${type} v${index}; ${tags}`).join('\n')}\n  } ${tail}\n};`).map(diagnostic => diagnostic.message);
+  const missing = index => `Meta-data VarKey must be specified for variable 'v${index}' of a variable block.`;
+
+  for (const [name, members, expected] of [
+    ['integer keys', ['<VarKey=1>', '<VarKey=2>'], []],
+    ['string keys', ['<VarKey="a">', '<VarKey="b">'], []],
+    ['a numeric string is a string', ['<VarKey="1">'], []],
+    ['a key given in scientific notation', ['<VarKey=1e3>'], []],
+    ['the largest key', ['<VarKey=1000000000>'], []],
+    ['a key on every member of a block, with other tags', ['<Cost=1> <VarKey=1>', '<VarKey=2> <Cost=2>'], []],
+    ['no key', ['', ''], [missing(0), missing(1)]],
+    ['the second without a key', ['<VarKey=1>', ''], [missing(1)]],
+    ['a single member without a key', [''], [missing(0)]],
+    ['a repeated integer', ['<VarKey=1>', '<VarKey=01>'], ['Meta-data VarKey 01 is already used by variable \'v0\' of the block.']],
+    ['a repeated string', ['<VarKey="a">', '<VarKey="a">'], ['Meta-data VarKey "a" is already used by variable \'v0\' of the block.']],
+    ['a string after integers', ['<VarKey=1>', '<VarKey="b">'], ['Meta-data VarKey must be an integer, like the other keys of the block.']],
+    ['an integer after strings', ['<VarKey="a">', '<VarKey=2>'], ['Meta-data VarKey must be a string, like the other keys of the block.']],
+    ['zero', ['<VarKey=0>'], ['Meta-data VarKey must be between 1 and 1,000,000,000.']],
+    ['a negative key', ['<VarKey=-1>'], ['Meta-data VarKey must be between 1 and 1,000,000,000.']],
+    ['a key above the largest', ['<VarKey=1000000001>'], ['Meta-data VarKey must be between 1 and 1,000,000,000.']],
+    ['a decimal key', ['<VarKey=1.5>'], ['Meta-data VarKey must be an integer.']],
+    ['an empty string', ['<VarKey="">'], ['Meta-data VarKey must not be empty.']],
+    ['a key without value is left alone', ['<VarKey>', '<VarKey>'], []],
+  ]) {
+    assert.deepStrictEqual(messages(members), expected, name);
+  }
+  assert.deepStrictEqual(messages(['<VarKey=1>'], 'B;', 'Categorical'), [], 'Categorical members');
+  assert.deepStrictEqual(messages([''], 'B;', 'Categorical'), [missing(0)], 'Categorical members need a key too');
+
+  const twoBlocks = '{\n Numerical a; <VarKey=1>\n} B1;\n{\n Numerical b; <VarKey=1>\n} B2;';
+  assert.deepStrictEqual(diagnosticsFor(`Dictionary D\n{\n${twoBlocks}\n};`), [], 'the same key in two blocks');
+  assert.deepStrictEqual(diagnosticsFor('Dictionary D\n{\n Numerical a; <VarKey=1>\n Numerical b; <VarKey=1>\n};'), [], 'keys outside a block');
+
+  // The default value of a block: a number for Numerical, a string for Categorical, and not the other way round.
+  const defaults = (tags, type = 'Numerical') => messages(['<VarKey=1>'], `B; ${tags}`, type);
+  assert.deepStrictEqual(defaults('<DefaultNumericalValue=0>'), []);
+  assert.deepStrictEqual(defaults('<DefaultNumericalValue=1.5>'), []);
+  assert.deepStrictEqual(defaults('<DefaultCategoricalValue="x">', 'Categorical'), []);
+  assert.deepStrictEqual(defaults('<DefaultNumericalValue="">'), ["Meta-data 'DefaultNumericalValue' needs a numerical value."]);
+  assert.deepStrictEqual(defaults('<DefaultNumericalValue>'), ["Meta-data 'DefaultNumericalValue' needs a numerical value."]);
+  assert.deepStrictEqual(defaults('<DefaultCategoricalValue=1>', 'Categorical'), ["Meta-data 'DefaultCategoricalValue' needs a string value."]);
+  assert.deepStrictEqual(defaults('<DefaultCategoricalValue="x">'), ["Meta-data 'DefaultCategoricalValue' does not apply to a block of 'Numerical' variables."]);
+  assert.deepStrictEqual(defaults('<DefaultNumericalValue=0>', 'Categorical'), ["Meta-data 'DefaultNumericalValue' does not apply to a block of 'Categorical' variables."]);
+  assert.deepStrictEqual(defaults('<Foo=1>'), [], 'another tag');
+}
+
+function testStatementStart() {
+  const inDictionary = body => `Dictionary D\n{\n${body}\n};`;
+  const reported = body => diagnosticsFor(inDictionary(body)).map(d => [d.severity, d.line, d.col, d.message]);
+  const notAType = (word, line, col, afterUnused = false) => [0, line, col,
+    `'${word}' is not a type: ${afterUnused ? "'Unused' must be followed by one" : "a declaration starts with 'Unused' or a type"}.`];
+
+  // Khiops rejects each of these with a syntax error: one error, on the word that is not a type.
+  for (const [name, body, expected] of [
+    ['a misspelled type', '  Categorial x;', [notAType('Categorial', 2, 2)]],
+    ['a misspelled Unused', '  Unuset Numerical x;', [notAType('Unuset', 2, 2)]],
+    ['a lowercase type', '  numerical x;', [notAType('numerical', 2, 2)]],
+    ['a word before the type', '  Foo Numerical x;', [notAType('Foo', 2, 2)]],
+    ['a word before the type, on the line before', '  Foo\n  Numerical x;', [notAType('Foo', 2, 2)]],
+    ['Unused without a type', '  Unused x;', [notAType('x', 2, 9, true)]],
+    ['a word after Unused', '  Unused Foo Numerical x;', [notAType('Foo', 2, 9, true)]],
+    ['a word after Unused, before an Entity', '  Unused Foo Entity(D) y;', [notAType('Foo', 2, 9, true)]],
+    ['a stray word', '  Numerical a;\n  Foo;', [notAType('Foo', 3, 2)]],
+    ['a stray backquoted name', '  Numerical a;\n  `my name`;', [notAType('my name', 3, 2)]],
+    ['after a statement, on the same line', '  Numerical a; Foo Numerical b;', [notAType('Foo', 2, 15)]],
+    ['inside a variable block', '  {\n    Foo Numerical a; <VarKey=1>\n  } B;', [notAType('Foo', 3, 4)]],
+    ['after a variable block', '  {\n    Numerical a; <VarKey=1>\n  } B;\n  Foo Numerical b;', [notAType('Foo', 5, 2)]],
+  ]) {
+    assert.deepStrictEqual(reported(body), expected, name);
+  }
+
+  // These are valid for Khiops.
+  for (const [name, body] of [
+    ['two statements on a line', '  Numerical a; Numerical b;'],
+    ['a derivation on several lines', '  Numerical a;\n  Numerical y = Sum(a,\n    a,\n    1);'],
+    ['a derivation line that starts with a keyword used as a name', '  Numerical Unused;\n  Numerical y = Sum(\n    Unused,\n    1);'],
+    ['a block with a derived tail', '  {\n    Numerical a; <VarKey=1>\n  } B;\n  {\n    Numerical b; <VarKey=1>\n  } C = CopyBlock(B);'],
+    ['Unused before a Structure', '  Unused Structure(Partition) p = Partition(IntervalBounds(1));'],
+    ['metadata and comments between statements', '  Numerical a; // one\n  <Label="x">\n  // two\n  Numerical b;'],
+    ['keywords used as names', '  Categorical Numerical;\n  Numerical Unused;\n  Date Root;'],
+  ]) {
+    assert.deepStrictEqual(reported(body), [], name);
+  }
+}
+
 function run() {
   testCommentHelpers();
   testLexicalTokens();
@@ -829,6 +1019,10 @@ function run() {
   testDictionaryKeysAndNames();
   testDerivationConstants();
   testDerivationArgumentScopes();
+  testDuplicateAndEdgeSpaceNames();
+  testRelationSchema();
+  testVariableBlockKeys();
+  testStatementStart();
   console.log('validator tests passed');
 }
 

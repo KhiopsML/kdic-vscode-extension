@@ -28,8 +28,8 @@ const VARIABLE_BLOCK_MEMBER = new RegExp(
   + `(?:\\s*\\[[^\\]]*\\])?(?:\\s*=\\s*[^;]+)?\\s*;(?:\\s*${METADATA})*\\s*$`,
 );
 
-/** The line closing a variable block: `} Name [= rule] ; <metadata>…`. */
-const VARIABLE_BLOCK_CLOSE = new RegExp(`^}\\s+${IDENTIFIER}(?:\\s*=.*)?;\\s*(?:${METADATA}\\s*)*$`);
+/** The line closing a variable block: `} Name [= rule] ; <metadata>…`, blanks allowed before the `;`. */
+const VARIABLE_BLOCK_CLOSE = new RegExp(`^}\\s+${IDENTIFIER}(?:\\s*=.*)?\\s*;\\s*(?:${METADATA}\\s*)*$`);
 
 /** Metadata tags (and whitespace) allowed right after a `;`. */
 const TAGS_AFTER_SEMICOLON = new RegExp(`^(?:\\s*${METADATA})*\\s*`);
@@ -238,7 +238,7 @@ class LineGrammarChecker {
     return line.effective.length === 0 || this.parenDepth !== 0 || this.bracketDepth !== 0 || this.previousEndsWithAssign;
   }
 
-  /** Whether the line matches a known construct, or is covered by one found by the token scan. */
+  /** Whether the line matches a known construct, or is covered by one found, or reported, by the token scan. */
   private isRecognized(line: Line): boolean {
     const { effective, index, depthBefore } = line;
     const patterns = depthBefore > 0 ? INSIDE_DICTIONARY : OUTSIDE_DICTIONARY;
@@ -250,6 +250,7 @@ class LineGrammarChecker {
       if (withoutMetadata === '' || patterns.some(pattern => pattern.test(withoutMetadata))) { return true; }
     }
     return this.structure.declarationLines.has(index)
+      || this.structure.rejectedLines.has(index)
       || this.headerLines.has(index)
       || (effective === ';' && this.structure.terminatorLines.has(index))
       || (depthBefore === 0 && isInlineDictionary(effective));

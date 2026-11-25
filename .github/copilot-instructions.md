@@ -21,7 +21,8 @@ the smoke-test CLI load directly from `out/`.
 | `src/rule-maps.ts` | `buildRuleMaps()`: parameter-type, return-type and operand-scope maps built from the rules |
 | `src/kdic-syntax.ts` | `KDIC_TYPES`, `FORMAT_METADATA_KEYS`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
 | `src/kdic-lexer.ts` | `tokenizeKdic()`: tokens with offsets, comments and quote state |
-| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key? which type does the open rule call expect?) |
+| `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key? which type does the open rule call expect? the operand being typed and its leading dots) |
+| `src/operand-completion.ts` | `operandVariablesAt()`: the variables and variable blocks an operand can name, from the text and an offset (no `vscode`). Scans the whole text, so `language-features.ts` skips it above `MAX_ANALYZED_CHARS` |
 | `src/validator.ts` | `validate(document, rules, cursorLine?)`: runs the checks below, returns `KdicDiagnostic[]` |
 | `src/validation/*.ts` | The individual checks (below) |
 | `src/khiops-runner.ts` | Finds the Khiops binary and runs it on a dictionary file |
@@ -36,8 +37,8 @@ Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets a
 
 1. `delimiters.ts` — unclosed / unmatched / wrongly nested `()`, `[]`, `{}`
 2. `metadata.ts` — locates `<key>`, `<key=value>` tags and reports malformed ones
-3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers and declarations);
-   reports missing `;` and invalid variable names
+3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers, declarations and
+   the names of their variable blocks); reports missing `;` and invalid variable names
 4. `format-metadata.ts` — `DateFormat`/`TimeFormat`/`TimestampFormat`/`TimestampTZFormat` on a variable
    of another type, without a string value, or with an unknown format
 5. `constants.ts` — numerical and categorical constants inside derivations
@@ -48,6 +49,11 @@ Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets a
 
 `diagnostics.ts` holds `KdicDocument`, `KdicDiagnostic`, `Severity` and the `DiagnosticCollector`
 the checks report to. All diagnostics are published with `source = 'kdic'`.
+
+`rule-calls.ts` and variable completion share three modules, so that both resolve an operand the same way:
+`call-tree.ts` (parser of a call, which can also read a call left open at the cursor), `call-scopes.ts`
+(the dictionary an operand is resolved in, from the rule's `operandScopes`, and the `.` scope operator)
+and `operand-site.ts` (what is known of the operand at an offset, used by `operand-completion.ts`).
 
 ### VS Code integration (`diagnostics-controller.ts`)
 

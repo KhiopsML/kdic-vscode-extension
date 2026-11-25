@@ -32,6 +32,7 @@ Context-aware completions:
 | After `Entity(` or `Table(` | Dictionary names declared in the current file                                |
 | After `<` (metadata key)    | `DateFormat`, `TimeFormat`, `TimestampFormat`, `TimestampTZFormat` — the key of the line's type first |
 | Numerical operand of a rule | `#Missing`, when the cursor follows `(` or `,` and the rule expects a `Numerical` there |
+| Operand of a rule           | The variables and variable blocks of the dictionary the operand is resolved in (the secondary table for aggregations, `TableSelection`, `GetValue*`, …), those of the expected type first; each `.` goes one scope up. Documents over 1,000,000 characters are completed from the line only |
 
 **Covered rule categories**: Numerical/Categorical comparisons, Logical operators, Data conversion, Math, String, Date/Time/Timestamp/TimestampTZ, Table aggregation, Table management, Vector, Hash Map, Data preparation, Predictor (Classifier/Regressor), Interpretation, Reinforcement, Coclustering, Sparse blocks (CopyBlock, GetBlock), Text sparse (TextWords, TextNgrams, TextTokens, …), Preparation sparse (DataGridBlock, DataGridStatsBlock, DataGridCellBlock), Table partition (Partition, TablePartition, TablePartitionCount, …), Table block (TableBlockMean, TableBlockEntropy, …).
 
@@ -187,7 +188,7 @@ The temporary profile and packaged extension remain in `test_dir` for inspection
 | Path | Content |
 | ---- | ------- |
 | `src/extension.ts` | Entry point: registers language features and diagnostics |
-| `src/language-features.ts`, `src/language-data.ts`, `src/derivation-rules.ts` | Completion and hover, with their data (keywords, types, derivation rules) |
+| `src/language-features.ts`, `src/operand-completion.ts`, `src/language-data.ts`, `src/derivation-rules.ts` | Completion and hover, with their data (keywords, types, derivation rules) |
 | `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save |
 | `src/validator.ts`, `src/validation/` | Built-in validation: one small module per kind of check |
 | `src/khiops-runner.ts`, `src/khiops-validation.ts` | Locating and running Khiops, and reading its output |

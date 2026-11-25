@@ -42,6 +42,11 @@ export function decodeIdentifier(raw: string): string {
   return raw.startsWith('`') ? raw.slice(1, -1).replace(/``/g, '`') : raw;
 }
 
+/** Writes a name as a dictionary file needs it: as it is when it is plain, else between backticks with each one doubled. */
+export function encodeIdentifier(name: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : `\`${name.replace(/`/g, '``')}\``;
+}
+
 type Range = { start: number; end: number };
 
 /**

@@ -12,8 +12,13 @@ const METADATA_AT_START = new RegExp(`^${METADATA_PATTERN}`);
 const METADATA_KEY_AT_END = /<(?:[A-Za-z_][A-Za-z0-9_]*)?$/;
 /** A `#` followed by letters, at the end of a string: the start of `#Missing`. */
 const HASH_WORD_AT_END = /#[A-Za-z]*$/;
-/** The operand being typed (`Age`, `#Mis`), which is not part of the context that precedes it. */
-const PARTIAL_OPERAND_AT_END = /#?[A-Za-z0-9_]*$/;
+/**
+ * The operand being typed, at the end of a string: the dots of the scope operator, then a name, a `#word`
+ * or the start of a backquoted name. Dots right after a name, a quote or a number belong to it.
+ */
+const PARTIAL_OPERAND_AT_END = /(?<![A-Za-z0-9_"`)])(\.*)[ \t]*(`(?:[^`\n]|``)*|#?[A-Za-z_][A-Za-z0-9_]*)?$/;
+/** Longest operand looked at, which keeps the search at the end of a long text cheap. */
+const MAX_PARTIAL_OPERAND = 300;
 /** The type that starts a declaration line, after an optional `Unused`. */
 const DECLARATION_TYPE = new RegExp(`^\\s*(?:Unused\\s+)?(${TYPE_ALTERNATION})\\b`);
 
@@ -113,6 +118,12 @@ function scanCalls(text: string): CallScan {
   return { calls, inQuote: quote !== undefined, atOperandStart };
 }
 
+/** The operand being typed at the end of `prefix`: how much text it takes, its dots, and the name typed so far. */
+export function partialOperand(prefix: string): { length: number; dots: number; word: string } {
+  const match = PARTIAL_OPERAND_AT_END.exec(prefix.slice(-MAX_PARTIAL_OPERAND));
+  return { length: match?.[0].length ?? 0, dots: match?.[1].length ?? 0, word: match?.[2] ?? '' };
+}
+
 /**
  * The type that the rule call enclosing the cursor expects for the operand about to be written,
  * or undefined when the cursor is not where an operand starts (right after `(` or `,`), is in
@@ -122,7 +133,7 @@ export function expectedOperandType(
   textBeforeCursor: string,
   paramTypes: ReadonlyMap<string, readonly string[]>,
 ): string | undefined {
-  const { calls, inQuote, atOperandStart } = scanCalls(textBeforeCursor.replace(PARTIAL_OPERAND_AT_END, ''));
+  const { calls, inQuote, atOperandStart } = scanCalls(textBeforeCursor.slice(0, textBeforeCursor.length - partialOperand(textBeforeCursor).length));
   const call = calls[calls.length - 1];
   const types = call?.rule === undefined ? undefined : paramTypes.get(call.rule);
   return inQuote || !atOperandStart || !call || !types ? undefined : parameterTypeAt(types, call.argument);

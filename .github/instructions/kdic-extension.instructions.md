@@ -56,7 +56,9 @@ Then call it from `validate()` in `src/validator.ts`, in pipeline order. Report 
 `out.atLine(line, col, endCol, message)`; pass `Severity.Warning` as last argument for warnings.
 
 Useful pieces: `structure.dictionaries[i].declarations` (`type`, `name`, `nameText`, `relationTarget`,
-`equalsIndex`), `dictionary.header` (`name`, `keys`, `valid`), `tokenName(token)` to get a decoded name,
+`equalsIndex`), `structure.dictionaries[i].blocks` (the `} Name [= rule] ;` tail of each variable block:
+`name`, `nameText`, `equalsIndex`; blocks are not declarations, so no check on variables sees them),
+`dictionary.header` (`name`, `keys`, `valid`), `tokenName(token)` to get a decoded name,
 `maskQuoted()` to search delimiters in code while ignoring quoted text.
 
 **Continuation lines** (multi-line derivations) must not be flagged as unknown: `line-grammar.ts` already

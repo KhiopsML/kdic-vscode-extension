@@ -7,7 +7,7 @@ Provide editing assistance for Khiops dictionary files in VS Code without requir
 ## Scope and verification
 
 - Highlighting and completion are editing aids, not proof that text is valid Khiops. Language reference: [Khiops dictionary files](https://khiops.org/api-docs/kdic/dictionary-files/).
-- `scripts/completion-context-test.js` and `scripts/completion-test.js` cover the completion context and provider results with a VS Code mock; `scripts/vscode-host-tests/` checks completion and hover in a real VS Code. Highlighting, snippets, and visual theme rendering have no automated tests.
+- `scripts/completion-context-test.js`, `scripts/operand-completion-test.js` and `scripts/completion-test.js` cover the completion context, the variables an operand can name, and provider results with a VS Code mock; `scripts/vscode-host-tests/` checks completion and hover in a real VS Code. Highlighting, snippets, and visual theme rendering have no automated tests.
 
 ## Requirements
 
@@ -70,6 +70,25 @@ The provider is also triggered by typing `<`.
 - **THEN** only `#Missing` is offered where it is possible, replacing what was typed, and nothing otherwise, including on a `#Khiops` header line
 
 `#Missing` is not offered as the whole derivation of a variable, which Khiops rejects. The provider is also triggered by typing `#`.
+
+#### Scenario: Variables as operands
+- **WHEN** completion is requested where an operand starts in a call of a known rule (right after `(` or `,`, or after the scope operator `.`), in a derivation, outside comments and quoted text
+- **THEN** the provider also offers the variables of the dictionary Khiops resolves that operand in: every variable of the dictionary, including those declared below and those marked `Unused`, except the variable whose derivation is being written
+- **AND** the variable blocks of that dictionary, named by the `Name` after their closing `}`, are offered too, with the detail `Block`
+- **AND** the operands of a table or entity rule documented as secondary (aggregations, `TableSelection`, `GetValue*`, `GetBlock*`) get the variables of the dictionary the first operand's `Table(X)` or `Entity(X)` points to, while the others get those of the current dictionary
+- **AND** each `.` before the operand goes one scope up, as in a derivation; more dots than scopes offers no variable
+- **AND** the variables of the type the rule expects at that position (a block, where a block is expected) come first; the others are still offered, since the rule may be overloaded or its signature incomplete
+- **AND** a name that must be written between backquotes is inserted with them; when the opening backquote was typed, the name replaces it and the closing one VS Code added
+- **WHEN** the rule is not registered, its first operand does not resolve to a dictionary declared exactly once in the file, or the position is not the start of an operand
+- **THEN** no variable is offered
+- **WHEN** the user has typed a `.` that is not before a name (after a name, a quote or a number)
+- **THEN** nothing is offered
+
+The provider is also triggered by typing `.`. Variable completion has no editor-level cache: it scans the document each time, which takes under 1 ms for the median file of a corpus of 3,300 dictionaries and 8 ms at the 99th percentile.
+
+#### Scenario: Large documents
+- **WHEN** the document holds more than 1,000,000 characters
+- **THEN** completion works from the current line only: no variables, no `#Missing` and no dictionary names are offered, and a `.` offers nothing, while keywords, types, derivation rules and metadata keys are still offered
 
 ### Requirement: Hover documentation
 The extension SHALL show documentation for recognized keywords, types, and registered derivation-rule names.

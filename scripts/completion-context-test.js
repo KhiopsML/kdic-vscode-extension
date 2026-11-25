@@ -3,7 +3,7 @@
 
 const assert = require('assert');
 const {
-  analyzeCompletionPrefix, declaredTypeOnLine, expectedOperandType, hashWordBeforeCursor, isInMetadataKey,
+  analyzeCompletionPrefix, declaredTypeOnLine, expectedOperandType, hashWordBeforeCursor, isInMetadataKey, partialOperand,
 } = require('../out/completion-context');
 
 const cases = [
@@ -76,6 +76,28 @@ for (const [prefix, expected] of hashWordCases) {
   assert.strictEqual(hashWordBeforeCursor(prefix), expected, `hashWordBeforeCursor(${JSON.stringify(prefix)})`);
 }
 
+const partialCases = [
+  ['Sum(', { length: 0, dots: 0, word: '' }],
+  ['Sum(Ag', { length: 2, dots: 0, word: 'Ag' }],
+  ['Sum(a, Ag', { length: 3, dots: 0, word: 'Ag' }],             // the blank before it is part of it
+  ['Sum(.', { length: 1, dots: 1, word: '' }],
+  ['Sum(..Ag', { length: 4, dots: 2, word: 'Ag' }],
+  ['Sum(. Ag', { length: 4, dots: 1, word: 'Ag' }],
+  ['Sum(`a b', { length: 4, dots: 0, word: '`a b' }],
+  ['Sum(.`a b', { length: 5, dots: 1, word: '`a b' }],
+  ['Sum(`a``b', { length: 5, dots: 0, word: '`a``b' }],           // a doubled backquote is inside the name
+  ['Sum(`a b`, `c', { length: 3, dots: 0, word: '`c' }],         // an earlier name is closed
+  ['Sum(#Mis', { length: 4, dots: 0, word: '#Mis' }],
+  ['Sum(3.', { length: 0, dots: 0, word: '' }],                    // the dot belongs to the number
+  ['Sum(12', { length: 0, dots: 0, word: '' }],
+  ['Sum(a.', { length: 0, dots: 0, word: '' }],
+  ['Sum(`a`.', { length: 0, dots: 0, word: '' }],
+  ['Sum("a".', { length: 0, dots: 0, word: '' }],
+];
+for (const [prefix, expected] of partialCases) {
+  assert.deepStrictEqual(partialOperand(prefix), expected, `partialOperand(${JSON.stringify(prefix)})`);
+}
+
 const paramTypes = new Map([
   ['EQ', ['Numerical', 'Numerical']],
   ['Min', ['Numerical', '...']],
@@ -107,7 +129,14 @@ const operandCases = [
   ['Numerical x = EQ(Age ', undefined],                 // not at the start of an operand
   ['Numerical x = EQ(Age, 3 ', undefined],
   ['Numerical x = EQ(Age, "a, ', undefined],            // in a string
-  ['Numerical x = EQ(Age, `a, ', undefined],
+  ['Numerical x = EQ(Age, `a, ', 'Numerical'],          // the start of a backquoted name, which may hold a comma
+  ['Numerical x = EQ(Age, "a`, ', undefined],            // a backquote inside a string is nothing
+  ['Numerical x = EQ(Age, .', 'Numerical'],             // the dots of the scope operator, then a name
+  ['Numerical x = EQ(Age, ..Ag', 'Numerical'],
+  ['Numerical x = EQ(Age, . Ag', 'Numerical'],
+  ['Numerical x = EQ(Age, 3.', undefined],              // the dot of a number
+  ['Numerical x = EQ(Age, 12', undefined],              // a number being typed
+  ['Numerical x = EQ(Age, `a b`.', undefined],          // not behind a name
   ['Numerical x = EQ("a(", ', 'Numerical'],             // a quoted parenthesis opens nothing
   ['Numerical x = EQ(Age, Age)', undefined],
   ['Numerical x = EQ(Age, Age) ', undefined],
@@ -122,4 +151,4 @@ const operandCases = [
 for (const [text, expected] of operandCases) {
   assert.strictEqual(expectedOperandType(text, paramTypes), expected, `expectedOperandType(${JSON.stringify(text)})`);
 }
-console.log(`Completion context tests passed (${cases.length + metadataKeyCases.length + declaredTypeCases.length + hashWordCases.length + operandCases.length} cases).`);
+console.log(`Completion context tests passed (${cases.length + metadataKeyCases.length + declaredTypeCases.length + hashWordCases.length + operandCases.length + partialCases.length} cases).`);

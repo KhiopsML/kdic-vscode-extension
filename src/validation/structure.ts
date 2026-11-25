@@ -21,6 +21,15 @@ export interface Declaration {
   endIndex?: number;
 }
 
+/** The `} Name [= rule] ;` tail of a variable block, which names the block as a whole. */
+export interface BlockTail {
+  name: KdicToken;
+  /** Name without backticks. */
+  nameText: string;
+  /** Index of the `=` of the derivation, if any. */
+  equalsIndex?: number;
+}
+
 /** The parsed `Root Dictionary Name (key, …)` header of a dictionary. */
 export interface DictionaryHeader {
   /** The `Dictionary` keyword token, when present. */
@@ -42,6 +51,8 @@ export interface Dictionary {
   closeIndex: number;
   /** Every declaration of the block, including those of nested variable blocks. */
   declarations: Declaration[];
+  /** The variable blocks of the dictionary, by the tail that names them. */
+  blocks: BlockTail[];
 }
 
 /** What the token scan learns about the document's overall shape. */
@@ -145,6 +156,8 @@ export function scanStructure(
   let groupDepth = 0;
   // Set right after a variable block's `}`: its `Name [= rule] ;` tail is not a declaration.
   let afterBlockClose = false;
+  // The tail being read after a variable block's `}`, once its name is seen.
+  let blockTail: BlockTail | undefined;
   let pending: Declaration | undefined;
   let headerStart = 0;
   let dictionary: Dictionary | undefined;
@@ -177,7 +190,7 @@ export function scanStructure(
           }
           dictionary = {
             headerTokens, header: parseHeader(headerTokens),
-            openIndex: index, closeIndex: tokens.length, declarations: [],
+            openIndex: index, closeIndex: tokens.length, declarations: [], blocks: [],
           };
           structure.dictionaries.push(dictionary);
         }
@@ -198,6 +211,7 @@ export function scanStructure(
           headerStart = index + 1;
         }
         afterBlockClose = braceDepth > 1;
+        blockTail = undefined;
         braceDepth = Math.max(0, braceDepth - 1);
         groupDepth = 0;
         continue;
@@ -209,6 +223,7 @@ export function scanStructure(
 
     if (token.kind === 'symbol' && token.text === '=') {
       if (pending) { pending.equalsIndex = index; }
+      else if (blockTail && blockTail.equalsIndex === undefined) { blockTail.equalsIndex = index; }
       continue;
     }
     if (token.kind === 'symbol' && token.text === ';') {
@@ -218,9 +233,16 @@ export function scanStructure(
       }
       pending = undefined;
       afterBlockClose = false;
+      blockTail = undefined;
       continue;
     }
-    if (afterBlockClose) { continue; }
+    if (afterBlockClose) {
+      if (!blockTail && isNameLike(token)) {
+        blockTail = { name: token, nameText: tokenName(token) };
+        dictionary!.blocks.push(blockTail);
+      }
+      continue;
+    }
 
     // Does a declaration start here?
     const nameIndex = declarationHeadEnd(tokens, index);

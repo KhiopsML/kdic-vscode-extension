@@ -141,17 +141,17 @@ Automated tests: `npm test`. VS Code host tests: see `README.md`.
 ## Khiops version of reference
 
 The built-in checks, the rule catalogue and the READMEs follow the documentation published on khiops.org, that is
-**Khiops 11.0.2** (checked on 2026-11-25). It is the `KHIOPS_VERSION` of the web site build, "the version of the
-Khiops package as documented on the web site", in `environment.env` of `KhiopsML/khiops-doc`:
-`gh api repos/KhiopsML/khiops-doc/contents/environment.env --jq .content | base64 -d | grep KHIOPS_VERSION`
-(the published site may lag behind `main`).
+**Khiops 11.0.2** (checked on 2026-11-26). The documented version is the latest release of Khiops, which the project
+owner confirms: the release marked `Latest` (not a pre-release) by
+`gh release list -R KhiopsML/khiops --limit 5`. Do not read `environment.env` of `KhiopsML/khiops-doc` (the
+`KHIOPS_VERSION` of the site build): it may be unavailable to the assistant, and the release list gives the same answer.
 
 The Khiops binary, not the web site, is the authority on behavior, and the site is incomplete: measure on the binary
 before writing a rule. The names, `VarKey` and multi-table schema rules were measured on Khiops 11.0.3-a.0 (a
 pre-release); the corpus (`corpus-expectations.json`) was checked with the same binary.
 
 **Before creating a tag or a new version** (`npm version`, `vsce package` or publish, a GitHub release), check that version:
-1. Read the version above again. If khiops.org now documents a newer Khiops, read what changed in its dictionary pages
+1. Compare the version above with the `Latest` release. If it is newer, read what changed in its dictionary pages
    (dictionary files, derivation rules, metadata, variable blocks, multi-table schemas) and update `DERIVATION_RULES`,
    the types, the metadata keys and the checks to match.
 2. Run the corpus check with a Khiops binary of that version: `node scripts/smoke-test.js --expected corpus-expectations.json`,

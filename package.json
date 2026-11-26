@@ -2,7 +2,7 @@
   "name": "khiops-kdic",
   "displayName": "Khiops Dictionary (.kdic)",
   "description": "Syntax highlighting and IntelliSense for Khiops dictionary files (.kdic)",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "khiopsml",
   "license": "BSD-3-Clause-Clear",
   "repository": {

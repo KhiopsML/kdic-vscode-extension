@@ -1,7 +1,9 @@
 /**
- * Where the operands of a rule call are resolved: in the dictionary of the call, or, for a table or entity
- * rule, in the dictionary of the table its first operand names; each dot of the scope operator goes one
- * scope up. Shared by the rule-call checks and the completion of operands, so both resolve a name the same way.
+ * Where the operands of a rule call are resolved: in the dictionary of the call, or, for a rule that names
+ * tables, in the dictionary of the table an operand names (the first one, or the one its `operandScopes` say);
+ * each dot of the scope operator goes one scope up. The target names after the `:` of a rule that builds
+ * instances are resolved in the target dictionary of the variable being declared. Shared by the rule-call
+ * checks and the completion of operands, so both resolve a name the same way.
  */
 import { tokenName } from '../kdic-lexer';
 import { parameterTypeAt, type RuleMaps } from '../rule-maps';
@@ -50,6 +52,29 @@ export function dictionaryScope(dictionary: Dictionary, context: ScopeContext): 
   return scopeOf(dictionary, 'this dictionary', context);
 }
 
+/** The target dictionary of an instance-building declaration, when its name resolves exactly once. */
+export function targetDictionaryScope(
+  declaration: Declaration | undefined, context: ScopeContext, parent?: Scope,
+): Scope | undefined {
+  const target = declaration?.relationTarget;
+  const candidates = target && context.dictionaries.get(tokenName(target));
+  if (!target || candidates?.length !== 1) { return undefined; }
+  const name = tokenName(target);
+  return scopeOf(candidates[0], `target dictionary '${name}'`, context, parent);
+}
+
+/**
+ * The dictionary in which the target name at `position` of a call is resolved: the target dictionary, or, for a
+ * name nested in a relation mapped earlier in the same call (`BuildGraph`), the dictionary of that relation.
+ */
+export function mappedOutputScope(call: RuleCall, position: number, target: Scope, context: ScopeContext): Scope | undefined {
+  const relationOutput = context.rules.outputScopes.get(call.rule.text)?.[position]?.relationOutput;
+  if (relationOutput === undefined) { return target; }
+  const relationName = call.outputNames?.[relationOutput];
+  const relation = relationName && target.variables.get(tokenName(relationName));
+  return relation ? targetDictionaryScope(relation, context, target) : undefined;
+}
+
 /** The scope `levels` above `scope`: undefined when `scope` is not known, `'beyond'` when there are not that many. */
 export function ancestorOf(scope: Scope | undefined, levels: number): Scope | undefined | 'beyond' {
   let found = scope;
@@ -61,21 +86,23 @@ export function ancestorOf(scope: Scope | undefined, levels: number): Scope | un
 }
 
 /** The declaration of the variable that a table rule's first operand names, whether or not it has dots. */
-function firstOperandDeclaration(first: Argument | undefined, scope: Scope | undefined, anchor: Scope | undefined): Declaration | undefined {
-  if (first?.kind === 'variable') { return scope?.variables.get(tokenName(first.token)); }
-  if (first?.kind !== 'upper' || first.argument.kind !== 'variable') { return undefined; }
-  const upper = ancestorOf(anchor, first.dots.length);
-  return upper && upper !== 'beyond' ? upper.variables.get(tokenName(first.argument.token)) : undefined;
+function tableOperandDeclaration(
+  argument: Argument | undefined, scope: Scope | undefined, anchor: Scope | undefined,
+): Declaration | undefined {
+  if (argument?.kind === 'variable') { return scope?.variables.get(tokenName(argument.token)); }
+  if (argument?.kind !== 'upper' || argument.argument.kind !== 'variable') { return undefined; }
+  const upper = ancestorOf(anchor, argument.dots.length);
+  return upper && upper !== 'beyond' ? upper.variables.get(tokenName(argument.argument.token)) : undefined;
 }
 
 /**
- * The scope of the operands of a table or entity rule that are in the secondary table: the dictionary the
- * first operand's `Table(X)` or `Entity(X)` points to. Unknown when the first operand is not a variable
- * of a known scope, or X is not declared exactly once in the file. A dot in front of an operand written
- * there goes back to `scope`, where the rule is evaluated.
+ * The scope of an operand evaluated in the dictionary referenced by one of the call's table arguments.
+ * Unknown when that argument is not a declared relation variable or its target is not declared exactly once.
  */
-function secondaryScope(call: RuleCall, scope: Scope | undefined, anchor: Scope | undefined, context: ScopeContext): Scope | undefined {
-  const target = firstOperandDeclaration(call.args[0], scope, anchor)?.relationTarget;
+function tableArgumentScope(
+  call: RuleCall, tableArgument: number, scope: Scope | undefined, anchor: Scope | undefined, context: ScopeContext,
+): Scope | undefined {
+  const target = tableOperandDeclaration(call.args[tableArgument], scope, anchor)?.relationTarget;
   const candidates = target && context.dictionaries.get(tokenName(target));
   if (!target || !scope || candidates?.length !== 1) { return undefined; }
   return scopeOf(candidates[0], `dictionary '${tokenName(target)}'`, context, scope);
@@ -91,7 +118,7 @@ function hasRegisteredArguments(call: RuleCall, paramTypes: readonly string[]): 
 export interface CallDescription {
   paramTypes: readonly string[] | undefined;
   isRelational: boolean;
-  secondary: Scope | undefined;
+  tableScopes: ReadonlyMap<number, Scope | undefined>;
 }
 
 /**
@@ -109,7 +136,14 @@ export function describeCall(
     : hasRegisteredArguments(call, registered));
   const paramTypes = matches ? registered : undefined;
   const isRelational = ['Table', 'Entity', 'Block(Table)', 'Block(Entity)'].includes(paramTypes?.[0] ?? '');
-  return { paramTypes, isRelational, secondary: paramTypes && isRelational ? secondaryScope(call, scope, anchor, context) : undefined };
+  const tableArguments = new Set<number>();
+  if (isRelational) { tableArguments.add(0); }
+  for (const operandScope of context.rules.paramScopes.get(call.rule.text) ?? []) {
+    if (typeof operandScope === 'object') { tableArguments.add(operandScope.tableArgument); }
+  }
+  const tableScopes = new Map([...tableArguments].map(index =>
+    [index, tableArgumentScope(call, index, scope, anchor, context)] as const));
+  return { paramTypes, isRelational, tableScopes };
 }
 
 /** What a call says of the argument at a position: the type it expects there, and the scope it is written in. */
@@ -130,10 +164,16 @@ export function describeArgument(
   call: RuleCall, description: CallDescription, position: number,
   scope: Scope | undefined, anchor: Scope | undefined, context: ScopeContext,
 ): ArgumentDescription {
-  const { paramTypes, isRelational, secondary } = description;
+  const { paramTypes, isRelational, tableScopes } = description;
   const expected = (paramTypes && parameterTypeAt(paramTypes, position)) ?? 'any';
-  const documented = context.rules.paramScopes.get(call.rule.text)?.[position];
+  const parameterScopes = context.rules.paramScopes.get(call.rule.text);
+  const varargs = paramTypes?.indexOf('...') ?? -1;
+  const documented = parameterScopes?.[position]
+    ?? (varargs >= 0 && position >= varargs ? parameterScopes?.[varargs] : undefined);
   const kind = documented ?? (isRelational && position > 0 ? 'unknown' : 'current');
-  const argumentScope = paramTypes === undefined ? undefined : kind === 'current' ? scope : kind === 'secondary' ? secondary : undefined;
-  return { expected, scope: argumentScope, anchor: kind === 'secondary' ? secondary : argumentScope && anchor };
+  const tableArgument = kind === 'secondary' ? 0 : typeof kind === 'object' ? kind.tableArgument : undefined;
+  const argumentScope = paramTypes === undefined ? undefined
+    : tableArgument === undefined ? kind === 'current' ? scope : undefined
+      : tableScopes.get(tableArgument);
+  return { expected, scope: argumentScope, anchor: tableArgument === undefined ? argumentScope && anchor : argumentScope };
 }

@@ -74,7 +74,7 @@ export function hashWordBeforeCursor(linePrefix: string): string | undefined {
 /** What a scan of derivation text learns about the rule calls still open at its end. */
 interface CallScan {
   /** The rule calls whose `(` is not closed, innermost last, with the position of the argument being written. */
-  calls: Array<{ rule: string | undefined; argument: number }>;
+  calls: Array<{ rule: string | undefined; argument: number; outputMapping: boolean }>;
   inQuote: boolean;
   /** Whether the last significant character is `(` or `,`, which an operand follows. */
   atOperandStart: boolean;
@@ -107,9 +107,12 @@ function scanCalls(text: string): CallScan {
       i = end === -1 ? text.length : end - 1; // a comment: neither the open calls nor the operand position change
       continue;
     }
-    if (ch === '(') { calls.push({ rule: previousWord, argument: 0 }); }
+    if (ch === '(') { calls.push({ rule: previousWord, argument: 0, outputMapping: false }); }
     else if (ch === ')') { calls.pop(); }
     else if (ch === ',') { if (calls.length > 0) { calls[calls.length - 1].argument++; } }
+    else if (ch === ':') {
+      if (calls.length > 0) { calls[calls.length - 1].outputMapping = true; }
+    }
     else if (ch === ';' || ch === '{' || ch === '}') { calls.length = 0; }
     else if (ch === '"' || ch === '`') { quote = ch; }
     atOperandStart = ch === '(' || ch === ',';
@@ -136,7 +139,9 @@ export function expectedOperandType(
   const { calls, inQuote, atOperandStart } = scanCalls(textBeforeCursor.slice(0, textBeforeCursor.length - partialOperand(textBeforeCursor).length));
   const call = calls[calls.length - 1];
   const types = call?.rule === undefined ? undefined : paramTypes.get(call.rule);
-  return inQuote || !atOperandStart || !call || !types ? undefined : parameterTypeAt(types, call.argument);
+  return inQuote || !atOperandStart || !call || call.outputMapping || !types
+    ? undefined
+    : parameterTypeAt(types, call.argument);
 }
 
 /** The variable type that starts the line (`Date` in `Unused Date d ;`), if any. */

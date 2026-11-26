@@ -6,7 +6,12 @@ const { operandVariablesAt } = require('../out/operand-completion');
 const { DERIVATION_RULES } = require('../out/derivation-rules');
 const { buildRuleMaps } = require('../out/rule-maps');
 
-const rules = buildRuleMaps(DERIVATION_RULES);
+const rules = buildRuleMaps([...DERIVATION_RULES, {
+  label: 'BuildJoinTest',
+  returnType: 'Table',
+  signature: 'BuildJoinTest(Table source, Categorical sourceKey, Table history, Date historicalDate : any target, ...)',
+  operandScopes: ['current', { tableArgument: 0 }, 'current', { tableArgument: 2 }],
+}]);
 
 /** A dictionary file where `body` is written in Client; `|` in the text marks the cursor. */
 function client(body, extra = '', purchaseBody = '') {
@@ -132,4 +137,76 @@ assert.deepStrictEqual(at(client('', '\nDictionary Other\n{\n    Numerical seen;
 assert.strictEqual(at(client('', '\nDictionary Other\n{\n    Numerical seen;\n    Numerical z = TableMean(purchases, |);\n};')),
   undefined, 'purchases is a variable of Client, not of Other');
 
-console.log(`Operand completion tests passed (${cases.length + 2} cases).`);
+const multiTable = body => `Dictionary Main
+{
+    Numerical sourceKey;
+    Time historicalDate;
+    Table(Source) source;
+    Table(Historical) history;
+    ${body}
+};
+Dictionary Source
+{
+    Categorical sourceKey;
+    Numerical sourceOnly;
+};
+Dictionary Historical
+{
+    Date historicalDate;
+    Categorical historicalOnly;
+};
+Dictionary Target
+{
+    Categorical targetValue;
+    Numerical targetNumber;
+};`;
+assert.deepStrictEqual(at(multiTable('Table(Target) output = BuildJoinTest(source, |);')),
+  { names: ['sourceKey', 'sourceOnly'], blocks: [], expected: 'Categorical', label: "dictionary 'Source'" });
+assert.deepStrictEqual(at(multiTable('Table(Target) output = BuildJoinTest(source, sourceKey, history, |);')),
+  { names: ['historicalDate', 'historicalOnly'], blocks: [], expected: 'Date', label: "dictionary 'Historical'" });
+assert.deepStrictEqual(at(multiTable('Table(Target) output = BuildJoinTest(source, sourceKey, history, historicalDate : |);')),
+  { names: ['targetValue', 'targetNumber'], blocks: [], expected: 'any', label: "target dictionary 'Target'" });
+assert.deepStrictEqual(at(multiTable('Table(Target) output = BuildJoinTest(source, sourceKey, history, historicalDate : targetValue, |);')),
+  { names: ['targetValue', 'targetNumber'], blocks: [], expected: 'any', label: "target dictionary 'Target'" });
+
+const graph = body => `Root Dictionary Main (id)
+{
+    Categorical id;
+    Table(NetworkNode) nodeData;
+    Table(NetworkEdge) edgeData;
+    Entity(Graph) graph = BuildGraph(nodeData, NodeId, edgeData, SourceNodeId, TargetNodeId : ${body});
+};
+Dictionary NetworkNode (id)
+{
+    Categorical id;
+    Numerical NodeValue;
+};
+Dictionary NetworkEdge (id)
+{
+    Categorical id;
+    Categorical SourceNodeId;
+    Categorical TargetNodeId;
+};
+Dictionary Node
+{
+    Entity(NetworkNode) Data;
+    Table(Edge) AdjacentEdges;
+    Categorical NodeId;
+};
+Dictionary Edge
+{
+    Entity(NetworkEdge) Data;
+    Entity(Node) SourceNode;
+    Entity(Node) TargetNode;
+};
+Dictionary Graph
+{
+    Table(Node) Nodes;
+    Table(Edge) Edges;
+};`;
+assert.deepStrictEqual(at(graph('Nodes, |')),
+  { names: ['Data', 'AdjacentEdges', 'NodeId'], blocks: [], expected: 'any', label: "target dictionary 'Node'" });
+assert.deepStrictEqual(at(graph('Nodes, Data, AdjacentEdges, Edges, |')),
+  { names: ['Data', 'SourceNode', 'TargetNode'], blocks: [], expected: 'any', label: "target dictionary 'Edge'" });
+
+console.log(`Operand completion tests passed (${cases.length + 6} cases).`);

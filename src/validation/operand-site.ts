@@ -4,7 +4,10 @@
  */
 import type { KdicToken } from '../kdic-lexer';
 import type { RuleMaps } from '../rule-maps';
-import { ancestorOf, createScopeContext, describeArgument, describeCall, dictionaryScope, type Scope } from './call-scopes';
+import {
+  ancestorOf, createScopeContext, describeArgument, describeCall, dictionaryScope, mappedOutputScope,
+  targetDictionaryScope, type Scope,
+} from './call-scopes';
 import { isSymbol, parseCall, type Argument, type RuleCall } from './call-tree';
 import type { BlockTail, Declaration, Structure } from './structure';
 
@@ -51,20 +54,26 @@ export function operandSiteAt(
   if (limit !== -1 && tokens[limit].start < operandStart) { return undefined; }
   const before = limit === -1 ? tokens : tokens.slice(0, limit);
   const last = before[before.length - 1];
-  if (!isSymbol(last, '(') && !isSymbol(last, ',')) { return undefined; }
+  if (!isSymbol(last, '(') && !isSymbol(last, ',') && !isSymbol(last, ':')) { return undefined; }
 
   const dictionary = structure.dictionaries.find(candidate =>
     candidate.openIndex < before.length && candidate.closeIndex >= before.length);
   const equalsIndex = dictionary && derivationStart(before, dictionary.openIndex, before.length);
   if (!dictionary || equalsIndex === undefined) { return undefined; }
   if (before[equalsIndex + 1]?.kind !== 'identifier' || !isSymbol(before[equalsIndex + 2], '(')) { return undefined; }
-  const root = parseCall(before, equalsIndex + 1, before.length, true);
+  const root = parseCall(before, equalsIndex + 1, before.length, { allowOpen: true, outputRules: rules.outputTypes });
   if (!root?.open) { return undefined; }
 
   const context = createScopeContext(structure, rules);
   const top = dictionaryScope(dictionary, context);
   const defined = dictionary.declarations.find(declaration => declaration.equalsIndex === equalsIndex)
     ?? dictionary.blocks.find(block => block.equalsIndex === equalsIndex);
+  // After a `:`, what is typed is a target name, written in the target dictionary of the variable.
+  if (root.outputSeparator) {
+    const target = dots === 0 && defined && 'type' in defined ? targetDictionaryScope(defined, context, top) : undefined;
+    const scope = target && mappedOutputScope(root, root.outputNames?.length ?? 0, target, context);
+    return { expected: 'any', scope, defined };
+  }
 
   // Go down the calls left open, each argument telling the scope of what is written in it.
   let call = root;

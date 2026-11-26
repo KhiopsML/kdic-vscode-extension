@@ -450,12 +450,53 @@
         "12:44 error Meta-data VarKey 4 is already used by variable 'PetalLengthCopy' of the block."
       ]
     },
+    "TestKhiops/TableCreationRules/BuildCompositeTable/CompositeTableKO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "32:90 error 'BuildCompositeTable' has 3 output names for 4 mapped source operands."
+      ]
+    },
     "TestKhiops/TableCreationRules/BuildEntityFromJson/CustomerJsonKO1.kdic": {
       "khiops": "rejects",
       "diagnostics": [
         "11:8 error Dictionary 'Contact' must have a key, as the target of Entity variable 'contact'.",
         "12:7 error Dictionary 'Hobby' must have a key, as the target of Table variable 'hobbies'.",
         "13:7 error Dictionary 'Product' must have a key, as the target of Table variable 'products'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildGraph/NetworkGraphKO2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "34:19 error 'SourceNode' is not declared in target dictionary 'Node'.",
+        "34:31 error 'TargetNode' is not declared in target dictionary 'Node'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildGraph/NetworkGraphKO3.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "34:19 error 'SourceNode' is not declared in target dictionary 'Node'.",
+        "34:31 error 'TargetNode' is not declared in target dictionary 'Node'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildGraph/NetworkGraphKO4.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "33:6 error 'Data' is not declared in target dictionary 'Graph'.",
+        "34:6 error 'Data' is not declared in target dictionary 'Graph'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildGraph/NetworkGraphKO7.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "33:56 error 'NodeIndex' is 'Numerical' but 'BuildGraph' expects 'Categorical' for argument 2."
+      ]
+    },
+    "TestKhiops/TableCreationRules/BuildGraph/NetworkGraphKO8.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "30:56 warning 'NodeIdUnknown' is not declared in dictionary 'NetworkNode'.",
+        "31:16 warning 'SourceNodeIdUnknown' is not declared in dictionary 'NetworkEdge'.",
+        "31:37 warning 'TargetNodeIdUnknown' is not declared in dictionary 'NetworkEdge'."
       ]
     },
     "TestKhiops/TableCreationRules/BuildList/SpliceJunctionKO2.kdic": {
@@ -465,6 +506,12 @@
         "16:9 error Dictionary 'SpliceJunctionDNANode' must have a key, as the target of Entity variable 'Forbidden'.",
         "22:9 error Dictionary 'SpliceJunctionDNANode' must have a key, as the target of Entity variable 'Prev'.",
         "23:9 error Dictionary 'SpliceJunctionDNANode' must have a key, as the target of Entity variable 'Next'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/EntityRenameVariables/Iris_RenameError2.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "9:136 error 'petalLength' is not declared in target dictionary 'irisData'."
       ]
     },
     "TestKhiops/TableCreationRules/NoKeyInCreatedSnowflake/Snowflake_KO1.kdic": {
@@ -495,6 +542,36 @@
       "khiops": "rejects",
       "diagnostics": [
         "9:47 warning 'DNAExtended' is not declared in this dictionary."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableAdvancedViewErrors/SpliceJunction_KO6.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:84 error 'BuildTableAdvancedView' has 2 output names for 1 mapped source operands."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableAdvancedViewErrors/SpliceJunction_KO7.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:77 error 'BuildTableAdvancedView' has 1 output names for 0 mapped source operands."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableAdvancedViewErrors/SpliceJunction_KO8.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:82 error 'BuildTableAdvancedView' maps a 'Numerical' value to 'Type' of type 'Categorical'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableAdvancedViewErrors/SpliceJunction_KO9.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:87 error 'UnknownVar' is not declared in target dictionary 'SpliceJunctionDNAExtended'."
+      ]
+    },
+    "TestKhiops/TableCreationRules/TableViewErrors/SpliceJunction_KO1.kdic": {
+      "khiops": "rejects",
+      "diagnostics": [
+        "8:40 error 'BuildTableView' cannot be used as an operand of 'TableCount'."
       ]
     },
     "TestKhiops/z_Work/NoKeyInCreatedSnowflake/Snowflake_KO1.kdic": {

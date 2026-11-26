@@ -23,7 +23,8 @@
  *                       relations, external entities                                       (relations.ts)
  *  9. rule calls      — each derivation parsed into a tree of calls: return types and argument types
  *                       (variables, constants, nested calls), each operand checked in the dictionary it is
- *                       resolved in                                                        (rule-calls.ts)
+ *                       resolved in; for the rules that build instances, the target names after `:` (declared,
+ *                       typed, as many as the operands) and the rules Khiops rejects as an operand (rule-calls.ts)
  * 10. line grammar    — line by line: variable-block members and closing, content after `;`, unknown lines
  *                       (warning)                                                          (line-grammar.ts)
  */

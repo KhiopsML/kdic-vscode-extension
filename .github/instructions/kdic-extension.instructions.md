@@ -25,12 +25,28 @@ Append one entry to `DERIVATION_RULES` in `src/derivation-rules.ts`. **No other 
 - `detail` is the category shown in the completion list; `returnType` drives the return-type check
   (`Numerical|Categorical` is a union, `any` is unchecked).
 - Signature parsing: `TypeName argName` → expected type; a bare `argName` → `any` (unchecked);
+  `Table(Dic) argName` / `Entity(Dic) argName` → `Table` / `Entity` (the dictionary is a placeholder);
   a last parameter `...` → varargs (extra positions repeat the type before `...`, unless a parameter is `any` or a structure, in which case they are unchecked); `Block(Type) argName` → block argument (not type-checked).
 - Relational rules (first parameter `Table`/`Entity`): operands after the first are unchecked unless the rule lists
   `operandScopes: ['current', 'secondary', …]`. A `'secondary'` operand is checked in the dictionary that the first
-  operand's `Table(X)`/`Entity(X)` points to, a `'current'` one in the current dictionary, `'unknown'` is not checked.
+  operand's `Table(X)`/`Entity(X)` points to, a `'current'` one in the current dictionary, `'unknown'` is not checked,
+  and `{ tableArgument: n }` is checked in the dictionary that the table at position `n` points to (a rule with two
+  source tables, such as `BuildTemporalJoin`). A table that does not resolve to exactly one dictionary leaves its operands unchecked.
   Do not guess a scope: measure it on Khiops with a variable declared in only one of the two dictionaries.
   A dot in front of an operand (`.x`, `..x`, `.rule(…)`) goes one scope up per dot; each scope keeps a link to its parent.
+
+## Adding a rule that builds instances (`Build…`)
+
+Such a call ends with target names after a `:` (`BuildEntity(a, b : x, y)`). Write the `:` in the signature, with the
+types of the target names after it: that is what makes the parser read the names as names and not as operands
+(`outputTypes` of `RuleMaps`). The names are completed and checked in the target dictionary of the variable the call
+defines (`Entity(Target) e = …`), never in the source scopes. Then, only for what was measured on the Khiops binary:
+
+- `mappedInputsFrom`: with a variable number of names, the position of the first source operand mapped to the first name;
+  there must be as many names as operands from there on, and a name whose output type is `any` must have its operand's type.
+- `outputScopes`: a name nested in a relation mapped earlier in the same call (`BuildGraph`) is resolved in that relation's dictionary.
+- `disallowAsOperand`: Khiops rejects the rule as the operand of another rule.
+- `semanticallyVerified: false`: the rule is documented but the reference binary does not know it yet; its calls stay unchecked.
 
 ## Adding a type
 

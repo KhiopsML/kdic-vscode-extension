@@ -47,7 +47,7 @@ the smoke-test CLI load directly from `out/`.
 | `src/derivation-rules.ts` | `DERIVATION_RULES`: ~300 built-in rules (completion, hover, type checking) |
 | `src/date-time-formats.ts` | `formatsOf()`, `isValidFormat()`: the date, time, timestamp and timestamp-tz formats Khiops documents |
 | `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES`, `METADATA_KEYS`, `MISSING_VALUE` (completion, hover) |
-| `src/rule-maps.ts` | `buildRuleMaps()`, and `RULE_MAPS` of the built-in rules: parameter-type, return-type and operand-scope maps |
+| `src/rule-maps.ts` | `buildRuleMaps()`, and `RULE_MAPS` of the built-in rules: parameter-type, return-type, operand-scope and output (`:` target names) maps |
 | `src/kdic-syntax.ts` | `KDIC_TYPES`, `FORMAT_METADATA_KEYS`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
 | `src/kdic-lexer.ts` | `tokenizeKdic()`: tokens with offsets, comments and quote state |
 | `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key? which type does the open rule call expect? the operand being typed and its leading dots) |
@@ -78,9 +78,10 @@ the checks report to. All diagnostics are published with `source = 'kdic'`.
 without checking anything, for the code that only needs what a document declares (completion, Khiops output).
 
 `rule-calls.ts` and variable completion share three modules, so that both resolve an operand the same way:
-`call-tree.ts` (parser of a call, which can also read a call left open at the cursor), `call-scopes.ts`
-(the dictionary an operand is resolved in, from the rule's `operandScopes`, and the `.` scope operator)
-and `operand-site.ts` (what is known of the operand at an offset, used by `operand-completion.ts`).
+`call-tree.ts` (parser of a call, which can also read a call left open at the cursor, and the target names after the
+`:` of the rules that build instances), `call-scopes.ts` (the dictionary an operand is resolved in, from the rule's
+`operandScopes`, and the `.` scope operator; the dictionary of a target name) and `operand-site.ts` (what is known of
+the operand at an offset, used by `operand-completion.ts`).
 
 ### VS Code integration (`diagnostics-controller.ts`)
 

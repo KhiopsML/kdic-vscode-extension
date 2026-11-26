@@ -5,6 +5,7 @@ const assert = require('assert');
 const Module = require('module');
 
 let completionProvider;
+let hoverProvider;
 const disposable = {};
 class Position {
   constructor(line, character) { this.line = line; this.character = character; }
@@ -16,16 +17,21 @@ class CompletionItem {
   constructor(label, kind) { this.label = label; this.kind = kind; }
 }
 class StringValue {
-  constructor(value) { this.value = value; }
+  constructor(value = '') { this.value = value; }
+  appendCodeblock(value, language) { this.value += `\`\`\`${language}\n${value}\n\`\`\`\n`; }
+  appendMarkdown(value) { this.value += value; }
+}
+class Hover {
+  constructor(contents, range) { this.contents = contents; this.range = range; }
 }
 const vscode = {
-  Position, Range, CompletionItem,
+  Position, Range, CompletionItem, Hover,
   MarkdownString: StringValue,
   SnippetString: StringValue,
   CompletionItemKind: { Keyword: 0, TypeParameter: 1, Function: 2, Class: 3, Property: 4, Constant: 5, Variable: 6 },
   languages: {
     registerCompletionItemProvider: (_selector, provider) => { completionProvider = provider; return disposable; },
-    registerHoverProvider: () => disposable,
+    registerHoverProvider: (_selector, provider) => { hoverProvider = provider; return disposable; },
   },
 };
 const originalLoad = Module._load;
@@ -55,6 +61,14 @@ function completionItems(prefix, before = 'Dictionary Main\n{\n', after = '\n};'
 function completions(...args) {
   return completionItems(...args).map(item => item.label);
 }
+
+function hover(label) {
+  const range = new Range(new Position(0, 0), new Position(0, label.length));
+  return hoverProvider.provideHover({ getWordRangeAtPosition: () => range, getText: () => label }, new Position(0, 0));
+}
+
+const { DERIVATION_RULES } = require('../out/derivation-rules');
+const instanceBuildingRules = DERIVATION_RULES.filter(rule => rule.detail === 'instance building');
 
 /** Variables to complete: a dictionary around the line being typed, and one that an entity of it points to. */
 const VARIABLES = {
@@ -247,6 +261,19 @@ const tests = [
   ['top level', () => assert.deepStrictEqual(completions('', ''), ['Dictionary', 'Root', 'Unused'])],
   ['relation target', () => {
     assert.deepStrictEqual(completions('Table( ', '// Dictionary Hidden\nDictionary Other {};\nDictionary Main\n{\n'), ['Other', 'Main']);
+  }],
+  ['instance-building rules have completion and hover documentation', () => {
+    const items = new Map(completionItems('Categorical x = ').map(item => [item.label, item]));
+    assert.strictEqual(instanceBuildingRules.length, 12);
+    for (const rule of instanceBuildingRules) {
+      const item = items.get(rule.label);
+      assert.ok(item, `${rule.label}: completion item`);
+      assert.ok(item.documentation.value.includes(rule.signature), `${rule.label}: completion signature`);
+      assert.ok(item.documentation.value.includes(rule.documentation), `${rule.label}: completion documentation`);
+      const result = hover(rule.label);
+      assert.ok(result.contents.value.includes(rule.signature), `${rule.label}: hover signature`);
+      assert.ok(result.contents.value.includes(rule.documentation), `${rule.label}: hover documentation`);
+    }
   }],
 ];
 

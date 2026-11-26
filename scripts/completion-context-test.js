@@ -107,6 +107,7 @@ const paramTypes = new Map([
   ['CopyBlock', ['Block(Numerical)']],
   ['Ignore', ['any', 'Numerical']],
   ['Deploy', ['any', 'Numerical', '...']],
+  ['BuildMappingTest', ['Numerical', '...']],
 ]);
 const operandCases = [
   ['EQ(', 'Numerical'],
@@ -122,6 +123,8 @@ const operandCases = [
   ['Categorical c = SwitchC(', 'Numerical'],
   ['Numerical x = TableMean(t, ', 'Numerical'],
   ['Numerical x = TableMean(', 'Table'],
+  ['BuildMappingTest(source : ', undefined],
+  ['BuildMappingTest(source : target, ', undefined],
   ['Numerical x = Ignore(Age, ', 'Numerical'],
   ['Numerical x = Deploy(grid, ', 'Numerical'],
   ['Numerical x = Deploy(grid, 1, ', undefined],          // `...` repeats nothing after an `any` parameter

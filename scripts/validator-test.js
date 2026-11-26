@@ -10,6 +10,7 @@ const validator = require(path.join(__dirname, '..', 'out', 'validator.js'));
 const { buildRuleMaps } = require(path.join(__dirname, '..', 'out', 'rule-maps.js'));
 const { stripLineComments, extractDictionaryNames } = require(path.join(__dirname, '..', 'out', 'kdic-syntax.js'));
 const { tokenizeKdic } = require(path.join(__dirname, '..', 'out', 'kdic-lexer.js'));
+const { parseCall } = require(path.join(__dirname, '..', 'out', 'validation', 'call-tree.js'));
 const { KdicTextDocument } = require(path.join(__dirname, '..', 'out', 'kdic-text-document.js'));
 const { formatsOf, isValidFormat } = require(path.join(__dirname, '..', 'out', 'date-time-formats.js'));
 const { FORMAT_METADATA_KEYS } = require(path.join(__dirname, '..', 'out', 'kdic-syntax.js'));
@@ -20,6 +21,7 @@ function createDocument(text) {
 }
 
 const { validate } = validator;
+const { DERIVATION_RULES } = require(path.join(__dirname, '..', 'out', 'derivation-rules.js'));
 const rules = buildRuleMaps([
   { label: 'Concat', returnType: 'Categorical', signature: 'Concat(Categorical value1, ...)' },
   { label: 'Replace', returnType: 'Categorical', signature: 'Replace(Categorical value, Numerical start, Categorical search, Categorical replacement)' },
@@ -38,6 +40,9 @@ const rules = buildRuleMaps([
   { label: 'Select', returnType: 'Table', signature: 'Select(Table table, Numerical criterion)', operandScopes: ['current', 'secondary'] },
   { label: 'GetValue', returnType: 'Numerical', signature: 'GetValue(Entity entity, Numerical value)', operandScopes: ['current', 'secondary'] },
   { label: 'TableAtRank', returnType: 'Entity', signature: 'TableAtRank(Table table, Numerical rank)', operandScopes: ['current', 'current'] },
+  { label: 'BuildJoin', returnType: 'Table', signature: 'BuildJoin(Table source, Categorical sourceKey, Table history, Date historicalDate)', operandScopes: ['current', { tableArgument: 0 }, 'current', { tableArgument: 2 }] },
+  { label: 'BuildMappedTest', returnType: 'Entity', signature: 'BuildMappedTest(Categorical source : any target, ...)' },
+  ...DERIVATION_RULES.filter(rule => rule.detail === 'instance building'),
 ]);
 
 function diagnosticsFor(text) {
@@ -798,6 +803,163 @@ function testDerivationConstants() {
   assertDiagnostic('malformed numeric input before output operands', 'Dictionary Records\n{\n Table(Records) output = BuildDummyTable(1e+ : first);\n};', 'Invalid numerical constant');
 }
 
+function testRuleCallOutputMappings() {
+  const parse = text => {
+    const tokens = tokenizeKdic(text);
+    return parseCall(tokens, 0, tokens.length);
+  };
+  const unmapped = parse('BuildRule(source)');
+  assert.ok(unmapped);
+  assert.strictEqual(unmapped.outputNames, undefined);
+
+  const empty = parse('BuildRule(source :)');
+  assert.ok(empty);
+  assert.deepStrictEqual(empty.outputNames, []);
+  assert.ok(empty.outputSeparator);
+
+  const mapped = parse('BuildRule(source, Sum(value, 1) : `target field`, other)');
+  assert.ok(mapped);
+  assert.deepStrictEqual(mapped.args.map(argument => argument.kind), ['variable', 'call']);
+  assert.deepStrictEqual(mapped.outputNames.map(token => token.text), ['`target field`', 'other']);
+  assert.strictEqual(mapped.outputSeparator.text, ':');
+
+  const quotedColon = parse('Rule("value:still input")');
+  assert.ok(quotedColon);
+  assert.strictEqual(quotedColon.outputNames, undefined);
+
+  assertNoDiagnostics('colon is not an output mapping for ordinary rules', `Dictionary Main
+{
+    Numerical result = TableCount(DNAExtended : Type);
+};`);
+  assertNoDiagnostics('mapped target variable', `Dictionary Main
+{
+    Categorical source;
+    Entity(Target) result = BuildMappedTest(source : targetValue);
+};
+Dictionary Target
+{
+    Categorical targetValue;
+};`);
+  assertDiagnostic('unknown mapped target variable', `Dictionary Main
+{
+    Categorical source;
+    Entity(Target) result = BuildMappedTest(source : absent);
+};
+Dictionary Target
+{
+    Numerical targetValue;
+};`, "is not declared in target dictionary 'Target'");
+
+  assertDiagnostic('BuildEntity source and target types must match', `Dictionary Main
+{
+    Numerical source;
+    Entity(Target) result = BuildEntity(source : targetValue);
+};
+Dictionary Target
+{
+    Categorical targetValue;
+};`, "'BuildEntity' maps a 'Numerical' value to 'targetValue' of type 'Categorical'");
+  assertDiagnostic('BuildEntity return type', `Dictionary Main
+{
+    Numerical source;
+    Numerical result = BuildEntity(source : targetValue);
+};
+Dictionary Target
+{
+    Numerical targetValue;
+};`, "'BuildEntity' returns 'Entity' but variable is declared as 'Numerical'");
+  assertDiagnostic('BuildTableAdvancedView source and target types must match', `Root Dictionary Main (id)
+{
+    Categorical id;
+    Table(Source) source;
+    Table(Target) result = BuildTableAdvancedView(source, 1 : targetValue);
+};
+Dictionary Source (id)
+{
+    Categorical id;
+};
+Dictionary Target
+{
+    Categorical targetValue;
+};`, "'BuildTableAdvancedView' maps a 'Numerical' value to 'targetValue' of type 'Categorical'");
+  assertDiagnostic('BuildDiffTable target type', `Root Dictionary Main (id)
+{
+    Categorical id;
+    Table(Source) source;
+    Table(Target) result = BuildDiffTable(source, value : difference);
+};
+Dictionary Source (id)
+{
+    Categorical id;
+    Numerical value;
+};
+Dictionary Target
+{
+    Categorical difference;
+};`, "'difference' is 'Categorical' but 'BuildDiffTable' requires 'Numerical' for output 1");
+  assertDiagnostic('BuildEntity source and target counts must match', `Dictionary Main
+{
+    Numerical first;
+    Numerical second;
+    Entity(Target) result = BuildEntity(first, second : targetValue);
+};
+Dictionary Target
+{
+    Numerical targetValue;
+};`, "'BuildEntity' has 1 output names for 2 mapped source operands");
+  assertDiagnostic('table creation rules cannot be nested', `Root Dictionary Main (id)
+{
+    Categorical id;
+    Table(Source) source;
+    Table(Target) result = BuildTableAdvancedView(BuildTableView(source), value : targetValue);
+};
+Dictionary Source (id)
+{
+    Categorical id;
+    Numerical value;
+};
+Dictionary Target
+{
+    Numerical targetValue;
+};`, "'BuildTableView' cannot be used as an operand of 'BuildTableAdvancedView'");
+  assertDiagnostic('entity creation rules cannot be nested', `Dictionary Main
+{
+    Numerical source;
+    Entity(Outer) result = BuildEntity(BuildEntity(source : value) : inner);
+};
+Dictionary Outer
+{
+    Entity(Inner) inner;
+};
+Dictionary Inner
+{
+    Numerical value;
+};`, "'BuildEntity' cannot be used as an operand of 'BuildEntity'");
+  assertDiagnostic('fixed output mappings require every target name', `Root Dictionary Main (id)
+{
+    Categorical id;
+    Table(Source) source;
+    Table(Link) result = BuildList(source : sourceEntity, previousElement);
+};
+Dictionary Source (id)
+{
+    Categorical id;
+};
+Dictionary Link
+{
+    Entity(Source) sourceEntity;
+    Entity(Link) previousElement;
+    Entity(Link) nextElement;
+};`, "'BuildList' requires 3 output names but has 2");
+  assertNoDiagnostics('unverified temporal rule remains unchecked', `Dictionary Main
+{
+    Numerical result = BuildTemporalJoin(1 : absent);
+};
+Dictionary Target
+{
+};`);
+}
+
 function testDerivationArgumentScopes() {
   const document = body => `Dictionary Client
 {
@@ -832,6 +994,32 @@ Dictionary Achat
 /** Dictionary text for the schema tests: the key fields are declared, `body` follows. */
 const dictionaryText = (name, keys, body = '', root = false) =>
   `${root ? 'Root ' : ''}Dictionary ${name}${keys.length ? ` (${keys.join(', ')})` : ''}\n{\n${keys.map(key => `  Categorical ${key};`).join('\n')}\n${body}\n};`;
+
+function testMultipleTableArgumentScopes() {
+  const text = `Dictionary Main
+{
+    Numerical sourceKey;
+    Date historicalDate;
+    Table(Source) source;
+    Table(Historical) history;
+    Table(Output) joined = BuildJoin(source, sourceKey, history, historicalDate);
+};
+Dictionary Source
+{
+    Numerical sourceKey;
+};
+Dictionary Historical
+{
+    Categorical historicalDate;
+};
+Dictionary Output
+{
+};`;
+  assert.deepStrictEqual(diagnosticsFor(text).map(diagnostic => diagnostic.message), [
+    "'sourceKey' is 'Numerical' but 'BuildJoin' expects 'Categorical' for argument 2.",
+    "'historicalDate' is 'Categorical' but 'BuildJoin' expects 'Date' for argument 4.",
+  ]);
+}
 
 function testDuplicateAndEdgeSpaceNames() {
   const messages = text => diagnosticsFor(text).map(diagnostic => diagnostic.message);
@@ -1018,7 +1206,9 @@ function run() {
   testScopeOperator();
   testDictionaryKeysAndNames();
   testDerivationConstants();
+  testRuleCallOutputMappings();
   testDerivationArgumentScopes();
+  testMultipleTableArgumentScopes();
   testDuplicateAndEdgeSpaceNames();
   testRelationSchema();
   testVariableBlockKeys();

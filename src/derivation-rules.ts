@@ -6,12 +6,19 @@
  * the tests and the smoke-test CLI can load it directly.
  *
  * To add a rule, append one entry to DERIVATION_RULES. The parameter-type,
- * return-type and operand-scope maps are rebuilt from it automatically
- * (see rule-maps.ts).
+ * return-type, operand-scope and output maps are rebuilt from it automatically
+ * (see rule-maps.ts). A rule that builds instances writes its target names after a
+ * `:` in its signature, which is what makes its calls read that way.
  */
 
-/** Where an operand of a relational rule is resolved: the current dictionary, a secondary table, or unknown. */
-export type OperandScope = 'current' | 'secondary' | 'unknown';
+/**
+ * Where an operand is resolved: the current dictionary, the dictionary of the table the first operand names
+ * (`'secondary'`), an unknown scope, or the dictionary of the table that the operand at `tableArgument` names.
+ */
+export type OperandScope = 'current' | 'secondary' | 'unknown' | { tableArgument: number };
+
+/** Where a target name after `:` is resolved: in the dictionary of the relation named by the output at `relationOutput`. */
+export type OutputScope = { relationOutput: number };
 
 export interface DerivationRule {
   /** Rule name, e.g. `TableCount`. */
@@ -25,6 +32,17 @@ export interface DerivationRule {
   documentation: string;
   /** Scope of each operand for relational rules; operands without a known scope are not checked locally. */
   operandScopes?: readonly OperandScope[];
+  /**
+   * For a rule with target names after `:` of a variable number: the position of the first source operand
+   * that is mapped to the first name, so that there must be as many names as operands from there on.
+   */
+  mappedInputsFrom?: number;
+  /** For a target name nested in a relation mapped earlier, where it is resolved; the others are in the target dictionary. */
+  outputScopes?: readonly (OutputScope | undefined)[];
+  /** Khiops rejects this rule when it is the operand of another rule. */
+  disallowAsOperand?: boolean;
+  /** `false` for a rule documented for a Khiops that the reference binary does not have yet: its calls are not checked. */
+  semanticallyVerified?: boolean;
 }
 
 export const DERIVATION_RULES: DerivationRule[] = [
@@ -376,4 +394,16 @@ export const DERIVATION_RULES: DerivationRule[] = [
   { label: 'TableBlockMin', detail: 'table block', returnType: 'Structure', signature: 'TableBlockMin(Table table, Block(Numerical) valueBlock)', documentation: 'Minimum value per variable of a Numerical block defined in the secondary Table.' },
   { label: 'TableBlockMax', detail: 'table block', returnType: 'Structure', signature: 'TableBlockMax(Table table, Block(Numerical) valueBlock)', documentation: 'Maximum value per variable of a Numerical block defined in the secondary Table.' },
   { label: 'TableBlockSum', detail: 'table block', returnType: 'Structure', signature: 'TableBlockSum(Table table, Block(Numerical) valueBlock)', documentation: 'Sum of values per variable of a Numerical block defined in the secondary Table.' },
+  { label: 'BuildEntity', detail: 'instance building', returnType: 'Entity', signature: 'BuildEntity(any sourceValue, ... : any targetVar, ...)', documentation: 'Creates an Entity by mapping source values to target variables in its declared target dictionary. Each native target variable must be filled.', mappedInputsFrom: 0, disallowAsOperand: true },
+  { label: 'BuildCompositeTable', detail: 'instance building', returnType: 'Table', signature: 'BuildCompositeTable(Table(SourceDic1) sourceTable1, Table(SourceDic2) sourceTable2, ... : Entity(SourceDic1) outputEntity1, Entity(SourceDic2) outputEntity2, ...)', operandScopes: ['current', 'current', 'current'], documentation: 'Creates a target table by aligning instances from multiple source tables. Mapped target Entity variables refer to the corresponding source instances.', mappedInputsFrom: 0, disallowAsOperand: true },
+  { label: 'BuildTableView', detail: 'instance building', returnType: 'Table', signature: 'BuildTableView(Table(SourceDic) table)', operandScopes: ['current'], documentation: 'Creates new table instances by copying matching native variables from a source table into its target dictionary.', disallowAsOperand: true },
+  { label: 'BuildTableAdvancedView', detail: 'instance building', returnType: 'Table', signature: 'BuildTableAdvancedView(Table(SourceDic) table, any sourceValue, ... : any targetVar, ...)', operandScopes: ['current', { tableArgument: 0 }, { tableArgument: 0 }], documentation: 'Creates a table view and maps additional source expressions to target variables in the same order. Output names follow `:`.', mappedInputsFrom: 1, disallowAsOperand: true },
+  { label: 'BuildEntityView', detail: 'instance building', returnType: 'Entity', signature: 'BuildEntityView(Entity(SourceDic) entity)', operandScopes: ['current'], documentation: 'Creates an Entity view by copying matching native variables from a source entity into its target dictionary.', disallowAsOperand: true },
+  { label: 'BuildEntityAdvancedView', detail: 'instance building', returnType: 'Entity', signature: 'BuildEntityAdvancedView(Entity(SourceDic) entity, any sourceValue, ... : any targetVar, ...)', operandScopes: ['current', { tableArgument: 0 }, { tableArgument: 0 }], documentation: 'Creates an Entity view and maps additional source expressions to target variables in the same order. Output names follow `:`.', mappedInputsFrom: 1, disallowAsOperand: true },
+  { label: 'BuildDiffTable', detail: 'instance building', returnType: 'Table', signature: 'BuildDiffTable(Table(SourceDic) sourceTable, any sourceValue, ... : Numerical diffVar, ...)', operandScopes: ['current', { tableArgument: 0 }, { tableArgument: 0 }], documentation: 'Creates a table containing differences between consecutive source instances. Difference outputs are Numerical; the first instance has missing differences.', mappedInputsFrom: 1 },
+  { label: 'BuildTemporalJoin', detail: 'instance building', returnType: 'Table', signature: 'BuildTemporalJoin(Table(SourceDic) sourceTable, TemporalType sourceTime, Table(HistoricalDic) historicalTable, TemporalType historicalTime, Numerical periodStart, Numerical periodEnd : Entity(SourceDic) outputSourceEntity, Entity(HistoricalDic) outputHistoricalEntity)', operandScopes: ['current', { tableArgument: 0 }, 'current', { tableArgument: 2 }, 'current', 'current'], documentation: 'For each source instance, selects the earliest eligible historical instance in the inclusive time-offset period. The output preserves source order and maps the matched source and historical entities after `:`.', semanticallyVerified: false },
+  { label: 'BuildList', detail: 'instance building', returnType: 'Table', signature: 'BuildList(Table(SourceDic) sourceTable : Entity(SourceDic) sourceEntity, Entity(TargetDic) previousElement, Entity(TargetDic) nextElement)', operandScopes: ['current'], documentation: 'Creates a linked-list table from a source table. Its target dictionary must define the source, previous, and next Entity variables named after `:`.', disallowAsOperand: true },
+  { label: 'BuildGraph', detail: 'instance building', returnType: 'Entity', signature: 'BuildGraph(Table(NodeDataDic) inputNodeTable, Categorical nodeId, Table(EdgeDataDic) inputEdgeTable, Categorical edgeNode1Id, Categorical edgeNode2Id : Table(NodeDic) graphNodeTable, Entity(NodeDataDic) nodeData, Table(EdgeDic) adjacentEdges, Table(EdgeDic) graphEdgeTable, Entity(EdgeDataDic) edgeData, Entity(NodeDic) edgeNode1, Entity(NodeDic) edgeNode2)', operandScopes: ['current', { tableArgument: 0 }, 'current', { tableArgument: 2 }, { tableArgument: 2 }], outputScopes: [undefined, { relationOutput: 0 }, { relationOutput: 0 }, undefined, { relationOutput: 3 }, { relationOutput: 3 }, { relationOutput: 3 }], documentation: 'Creates an undirected graph entity from node and edge tables, mapping its node, edge, and source-data relations to target variables after `:`.', disallowAsOperand: true },
+  { label: 'BuildEntityFromJson', detail: 'instance building', returnType: 'Entity', signature: 'BuildEntityFromJson(Text jsonValue)', operandScopes: ['current'], documentation: 'Creates a target Entity from a JSON object held in a Text variable. Matching, compatible JSON fields populate target variables and nested relations.', disallowAsOperand: true },
+  { label: 'BuildTableFromJson', detail: 'instance building', returnType: 'Table', signature: 'BuildTableFromJson(Text jsonValue)', operandScopes: ['current'], documentation: 'Creates a target Table from a JSON array held in a Text variable, with one target instance per array element.', disallowAsOperand: true },
 ];

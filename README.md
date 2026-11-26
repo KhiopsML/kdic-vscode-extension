@@ -232,7 +232,8 @@ To also check the extension on a directory of real dictionaries (for example the
 | `src/language-features.ts`, `src/operand-completion.ts`, `src/language-data.ts`, `src/derivation-rules.ts` | Completion and hover, with their data (keywords, types, derivation rules) |
 | `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save |
 | `src/validator.ts`, `src/validation/` | Built-in validation: one small module per kind of check |
-| `src/khiops-runner.ts`, `src/khiops-validation.ts` | Locating and running Khiops, and reading its output |
+| `src/khiops-runner.ts`, `src/khiops-version.ts`, `src/khiops-validation.ts` | Locating and running Khiops, reading its version, and reading its output |
+| `src/khiops-services.ts` | What the features that run Khiops share: output channel, debug traces, version warning |
 | `src/carriage-returns.ts` | Detects files with isolated carriage returns, which VS Code would corrupt in the editor |
 | `src/kdic-lexer.ts`, `src/kdic-syntax.ts`, `src/kdic-text-document.ts` | Tokenizer, shared syntax helpers, plain-text document |
 | `syntaxes/`, `snippets/`, `language-configuration.json` | Highlighting, snippets, editing configuration |

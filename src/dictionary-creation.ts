@@ -1,8 +1,14 @@
+/**
+ * The command "Create Khiops Dictionary from This File": every user interaction (the file, the header
+ * option, the replacement of an existing dictionary, progress and errors). `dictionary-builder.ts`
+ * builds the dictionary.
+ */
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { createDictionary, dictionaryPathFor } from './dictionary-builder';
-import { findKhiopsBinary, type KhiopsVersionCheck, type Trace } from './khiops-runner';
+import { createDictionary, dictionaryPathFor, scenarioPathProblem, type DictionaryCreationResult } from './dictionary-builder';
+import { findKhiopsBinary } from './khiops-runner';
+import { showErrorWithOutput, type KhiopsServices } from './khiops-services';
 
 interface HeaderChoice extends vscode.QuickPickItem {
   headerLineUsed: boolean;
@@ -17,51 +23,36 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
+/** The data file: the one the menu gives, else the active editor's, else the one the user picks. */
 async function sourceUri(uri?: vscode.Uri): Promise<vscode.Uri | undefined> {
   if (uri) { return uri; }
   if (vscode.window.activeTextEditor) { return vscode.window.activeTextEditor.document.uri; }
   return (await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false }))?.[0];
 }
 
-async function destinationExists(destination: string): Promise<boolean> {
-  try {
-    await fs.promises.lstat(destination);
-    return true;
-  } catch (error) {
-    if (isMissing(error)) { return false; }
-    throw error;
-  }
-}
-
-async function createFromFile(
-  uri: vscode.Uri | undefined, output: vscode.OutputChannel, trace: Trace, checkVersion: KhiopsVersionCheck,
-): Promise<void> {
-  const source = await sourceUri(uri);
-  if (!source) { return; }
+/** Whether `source` is a local data file that can be used; if not, tells the user why. */
+async function isUsableSource(source: vscode.Uri): Promise<boolean> {
   if (source.scheme !== 'file' || path.extname(source.fsPath).toLowerCase() === '.kdic') {
     await vscode.window.showErrorMessage('Select a local data file other than a .kdic file.');
-    return;
+    return false;
   }
-
   try {
-    const stat = await fs.promises.stat(source.fsPath);
-    if (!stat.isFile()) {
+    if (!(await fs.promises.stat(source.fsPath)).isFile()) {
       await vscode.window.showErrorMessage('Select a local data file, not a folder.');
-      return;
+      return false;
     }
   } catch (error) {
+    // A file that does not exist is left to Khiops, which reports it.
     if (!isMissing(error)) {
       await vscode.window.showErrorMessage(`Cannot access ${source.fsPath}: ${String(error)}`);
-      return;
+      return false;
     }
   }
+  return true;
+}
 
-  const destination = dictionaryPathFor(source.fsPath);
-  if (/[\r\n]/.test(source.fsPath) || /[\r\n]/.test(destination)) {
-    await vscode.window.showErrorMessage('Paths containing a carriage return or line feed cannot be used in a Khiops scenario.');
-    return;
-  }
-
+/** The Khiops executable, or undefined, after telling the user how to set one, when there is none. */
+async function findBinary(source: vscode.Uri, { trace }: KhiopsServices): Promise<string | undefined> {
   const binary = findKhiopsBinary(vscode.workspace.getConfiguration('kdic', source).get<string>('khiopsPath', ''), trace);
   if (!binary) {
     const choice = await vscode.window.showErrorMessage(
@@ -69,59 +60,89 @@ async function createFromFile(
     if (choice === 'Open Settings') {
       await vscode.commands.executeCommand('workbench.action.openSettings', 'kdic.khiopsPath');
     }
+  }
+  return binary;
+}
+
+/** Whether something, even a broken link, is at `target`. Any error other than "not found" is thrown. */
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.promises.lstat(target);
+    return true;
+  } catch (error) {
+    if (isMissing(error)) { return false; }
+    throw error;
+  }
+}
+
+/** Whether the destination can be written: it is free, or the user agrees to replace it. */
+async function confirmDestination(destination: string): Promise<boolean> {
+  if (!await pathExists(destination)) { return true; }
+  const choice = await vscode.window.showWarningMessage(
+    `Replace the existing dictionary ${destination}?`, { modal: true }, 'Replace');
+  return choice === 'Replace';
+}
+
+/** Tells the user why the creation failed, with the first Khiops error, and logs the whole Khiops output. */
+async function reportFailure(
+  source: string, failure: Extract<DictionaryCreationResult, { ok: false }>, services: KhiopsServices,
+): Promise<void> {
+  services.output.appendLine(`[Khiops] Dictionary creation failed for ${source}:`);
+  services.output.appendLine(failure.output || failure.reason);
+
+  const [first, ...others] = failure.errors;
+  const detail = first === undefined ? failure.reason
+    : others.length ? `${first} (${others.length} more in the output)` : first;
+  await showErrorWithOutput(services, `Khiops could not create the dictionary: ${detail}`);
+}
+
+/** The whole command, from the choice of the data file to the opening of the new dictionary. */
+async function createFromFile(uri: vscode.Uri | undefined, services: KhiopsServices): Promise<void> {
+  const source = await sourceUri(uri);
+  if (!source || !await isUsableSource(source)) { return; }
+
+  const destination = dictionaryPathFor(source.fsPath);
+  const pathProblem = scenarioPathProblem(source.fsPath, destination);
+  if (pathProblem) {
+    await vscode.window.showErrorMessage(pathProblem);
     return;
   }
+
+  const binary = await findBinary(source, services);
+  if (!binary) { return; }
 
   const header = await vscode.window.showQuickPick(HEADER_CHOICES, {
     title: 'Does the data file have a header?',
     placeHolder: 'Choose how Khiops should interpret the first line',
   });
-  if (!header) { return; }
-
-  if (await destinationExists(destination)) {
-    const choice = await vscode.window.showWarningMessage(
-      `Replace the existing dictionary ${destination}?`, { modal: true }, 'Replace');
-    if (choice !== 'Replace') { return; }
-  }
+  if (!header || !await confirmDestination(destination)) { return; }
 
   const result = await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: `Creating dictionary from ${path.basename(source.fsPath)}`,
     cancellable: false,
   }, async () => {
-    await checkVersion(binary);
-    return createDictionary(binary, source.fsPath, destination, header.headerLineUsed, trace);
+    await services.checkVersion(binary);
+    return createDictionary(binary, source.fsPath, destination, header.headerLineUsed, services.trace);
   });
-
   if (!result.ok) {
-    output.appendLine(`[Khiops] Dictionary creation failed for ${source.fsPath}:`);
-    output.appendLine(result.output || result.reason || 'No output captured.');
-    const extra = result.errors.length > 1 ? ` (${result.errors.length - 1} more in the output)` : '';
-    const message = result.errors.length
-      ? `Khiops could not create the dictionary: ${result.errors[0]}${extra}`
-      : `Khiops could not create the dictionary: ${result.reason ?? 'Unknown failure'}`;
-    if (await vscode.window.showErrorMessage(message, 'Show Output') === 'Show Output') { output.show(); }
+    await reportFailure(source.fsPath, result, services);
     return;
   }
 
-  if (result.reason) { await vscode.window.showWarningMessage(result.reason); }
   const document = await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
   await vscode.window.showTextDocument(document);
 }
 
 /** Registers the user-initiated dictionary creation command. */
-export function registerDictionaryCreation(
-  context: vscode.ExtensionContext, output: vscode.OutputChannel, trace: Trace, checkVersion: KhiopsVersionCheck,
-): void {
+export function registerDictionaryCreation(context: vscode.ExtensionContext, services: KhiopsServices): void {
   context.subscriptions.push(vscode.commands.registerCommand('kdic.createDictionaryFromFile', async (uri?: vscode.Uri) => {
     try {
-      await createFromFile(uri, output, trace, checkVersion);
+      await createFromFile(uri, services);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      output.appendLine(`[Khiops] Dictionary creation failed: ${message}`);
-      if (await vscode.window.showErrorMessage(`Dictionary creation failed: ${message}`, 'Show Output') === 'Show Output') {
-        output.show();
-      }
+      services.output.appendLine(`[Khiops] Dictionary creation failed: ${message}`);
+      await showErrorWithOutput(services, `Dictionary creation failed: ${message}`);
     }
   }));
 }

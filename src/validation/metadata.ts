@@ -1,3 +1,4 @@
+/** Finds the metadata tags (`<key>`, `<key=value>`) of a document and reports the malformed ones. */
 import type { KdicToken } from '../kdic-lexer';
 import type { DiagnosticCollector } from './diagnostics';
 

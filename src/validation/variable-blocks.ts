@@ -1,13 +1,12 @@
+/** Checks of the variable blocks: the `VarKey` of each member and the default value of the block. */
 import type { KdicToken } from '../kdic-lexer';
+import { decodeString } from '../kdic-syntax';
 import type { DiagnosticCollector } from './diagnostics';
 import { tagsAfter, type MetadataInfo, type MetadataTag } from './metadata';
 import type { BlockTail, Structure } from './structure';
 
 /** The largest integer Khiops accepts as a `VarKey`. */
 const MAX_VARKEY = 1_000_000_000;
-
-/** The value of a string tag, without its quotes and with doubled quotes undone. */
-const stringValue = (token: KdicToken): string => token.text.slice(1, -1).replace(/""/g, '"');
 
 /** The tags of what ends at `;` — a variable or the tail of a block — or none when it has no `;`. */
 function tagsOf(endIndex: number | undefined, tokens: readonly KdicToken[], metadata: MetadataInfo): MetadataTag[] {
@@ -40,7 +39,7 @@ function checkVarKeys(block: BlockTail, tokens: readonly KdicToken[], metadata: 
     }
 
     const number = Number(value.text);
-    const text = current === 'integer' ? String(number) : stringValue(value);
+    const text = current === 'integer' ? String(number) : decodeString(value.text);
     if (current === 'integer' && !Number.isInteger(number)) {
       out.atToken(value, 'Meta-data VarKey must be an integer.');
     } else if (current === 'integer' && (number < 1 || number > MAX_VARKEY)) {

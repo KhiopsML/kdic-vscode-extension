@@ -1,6 +1,7 @@
+/** Checks of the multi-table schema: root dictionaries, key lengths along relations, and external entities. */
 import { tokenName } from '../kdic-lexer';
 import type { DiagnosticCollector } from './diagnostics';
-import type { Declaration, Dictionary, Structure } from './structure';
+import { dictionariesByName, type Declaration, type Dictionary, type Structure } from './structure';
 
 /** A relation variable, `Table(X)` or `Entity(X)`, whose target is a dictionary of the file. */
 interface Relation {
@@ -21,13 +22,12 @@ const isNative = ({ relationTarget, equalsIndex, joinKeys, inBlock }: Declaratio
 const isExternal = ({ relationTarget, joinKeys }: Declaration): boolean => relationTarget !== undefined && joinKeys !== undefined;
 
 /** The dictionaries of the file by name; a name declared twice is left out, as it is reported on its own. */
-function dictionariesByName(structure: Structure): Map<string, Dictionary> {
-  const found = new Map<string, Dictionary[]>();
-  for (const dictionary of structure.dictionaries) {
-    const name = dictionary.header.name;
-    if (name) { found.set(tokenName(name), [...(found.get(tokenName(name)) ?? []), dictionary]); }
+function uniqueDictionaries(structure: Structure): Map<string, Dictionary> {
+  const unique = new Map<string, Dictionary>();
+  for (const [name, same] of dictionariesByName(structure)) {
+    if (same.length === 1) { unique.set(name, same[0]); }
   }
-  return new Map([...found].filter(([, same]) => same.length === 1).map(([name, [dictionary]]) => [name, dictionary]));
+  return unique;
 }
 
 /** The relations of a dictionary that satisfy `keep`, including those marked `Unused`, which Khiops checks as well. */
@@ -86,7 +86,7 @@ function checkExternalEntity({ declaration, target }: Relation, out: DiagnosticC
  * and an external entity refers to a root dictionary.
  */
 export function checkRelations(structure: Structure, out: DiagnosticCollector): void {
-  const byName = dictionariesByName(structure);
+  const byName = uniqueDictionaries(structure);
   const components = new Map(structure.dictionaries.map(dictionary => [dictionary, relationsOf(dictionary, byName, isNative)]));
 
   for (const dictionary of structure.dictionaries) {

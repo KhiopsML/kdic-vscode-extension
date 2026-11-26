@@ -1,3 +1,9 @@
+/**
+ * The KDIC tokenizer: turns text into tokens that keep their source offsets, comments and quote state, so
+ * that a check is never fooled by a string or a comment.
+ *
+ * Free of any VS Code dependency.
+ */
 import { decodeIdentifier } from './kdic-syntax';
 
 export type KdicTokenKind =
@@ -20,61 +26,73 @@ export interface KdicToken {
   closed?: boolean;
 }
 
+/** Tokens made of letters and digits, tried in this order at each position (`#Missing` before any other `#`). */
+const WORD_PATTERNS: ReadonlyArray<readonly [KdicTokenKind, RegExp]> = [
+  ['missing', /#Missing/y],
+  ['identifier', /[A-Za-z_][A-Za-z0-9_]*/y],
+  ['number', /[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/y],
+];
+
+/** Whether a comment starts at `index`: `// ...`, or a `#` line that is not `#Missing`. */
+function startsComment(text: string, index: number): boolean {
+  return (text[index] === '/' && text[index + 1] === '/') || (text[index] === '#' && !text.startsWith('#Missing', index));
+}
+
+/** The offset of the line break that ends the line holding `index`, or the end of the text. */
+function lineEnd(text: string, index: number): number {
+  const end = text.indexOf('\n', index);
+  return end === -1 ? text.length : end;
+}
+
+/**
+ * Reads the string or backtick identifier whose opening quote is at `start`: where it ends and whether its
+ * closing quote was found. A doubled quote is an escaped quote; a quote left open ends at the line break.
+ */
+function readQuoted(text: string, start: number): { end: number; closed: boolean } {
+  const quote = text[start];
+  let index = start + 1;
+  while (index < text.length && text[index] !== '\n') {
+    if (text[index] !== quote) { index++; }
+    else if (text[index + 1] === quote) { index += 2; }
+    else { return { end: index + 1, closed: true }; }
+  }
+  return { end: index, closed: false };
+}
+
+/** The `#Missing`, identifier or number that starts at `index`, if there is one. */
+function readWord(text: string, index: number): { kind: KdicTokenKind; text: string } | undefined {
+  for (const [kind, pattern] of WORD_PATTERNS) {
+    pattern.lastIndex = index; // sticky: the pattern only matches at this position
+    const match = pattern.exec(text);
+    if (match) { return { kind, text: match[0] }; }
+  }
+  return undefined;
+}
+
 /**
  * Tokenizes KDIC text without discarding comments or source offsets.
  * Quoted tokens never span lines: a quote left open ends at the line break.
  */
 export function tokenizeKdic(text: string): KdicToken[] {
   const tokens: KdicToken[] = [];
-  // Sticky patterns, matched at the current position only.
-  const identifierPattern = /[A-Za-z_][A-Za-z0-9_]*/y;
-  const numberPattern = /[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/y;
-  const missingPattern = /#Missing/y;
-  let i = 0;
-  while (i < text.length) {
-    const start = i;
-    const ch = text[i];
-    if (/\s/.test(ch)) { i++; continue; }
+  let index = 0;
+  while (index < text.length) {
+    const start = index;
+    const char = text[index];
+    if (/\s/.test(char)) { index++; continue; }
 
-    // Comment: `// ...` or a `#` line that is not #Missing.
-    if ((ch === '/' && text[i + 1] === '/') || (ch === '#' && !text.startsWith('#Missing', i))) {
-      i += ch === '#' ? 1 : 2;
-      while (i < text.length && text[i] !== '\n') { i++; }
-      tokens.push({ kind: 'comment', start, end: i, text: text.slice(start, i) });
-      continue;
-    }
-
-    // String or backtick identifier; a doubled quote is an escaped quote.
-    if (ch === '"' || ch === '`') {
-      i++;
-      let closed = false;
-      while (i < text.length && text[i] !== '\n') {
-        if (text[i] === ch) {
-          if (text[i + 1] === ch) { i += 2; continue; }
-          i++;
-          closed = true;
-          break;
-        }
-        i++;
-      }
-      tokens.push({ kind: ch === '"' ? 'string' : 'quotedIdentifier', start, end: i, text: text.slice(start, i), closed });
-      continue;
-    }
-
-    // #Missing, identifier or number; anything else is a one-character symbol.
-    missingPattern.lastIndex = i;
-    identifierPattern.lastIndex = i;
-    numberPattern.lastIndex = i;
-    const missing = missingPattern.exec(text);
-    const identifier = identifierPattern.exec(text);
-    const number = numberPattern.exec(text);
-    const match = missing ?? identifier ?? number;
-    if (match) {
-      i += match[0].length;
-      tokens.push({ kind: missing ? 'missing' : identifier ? 'identifier' : 'number', start, end: i, text: match[0] });
+    if (startsComment(text, index)) {
+      index = lineEnd(text, index);
+      tokens.push({ kind: 'comment', start, end: index, text: text.slice(start, index) });
+    } else if (char === '"' || char === '`') {
+      const { end, closed } = readQuoted(text, index);
+      index = end;
+      tokens.push({ kind: char === '"' ? 'string' : 'quotedIdentifier', start, end, text: text.slice(start, end), closed });
     } else {
-      i++;
-      tokens.push({ kind: 'symbol', start, end: i, text: ch });
+      // Anything that is neither a comment, a quoted token nor a word is a one-character symbol.
+      const word = readWord(text, index);
+      index += word?.text.length ?? 1;
+      tokens.push({ kind: word?.kind ?? 'symbol', start, end: index, text: word?.text ?? char });
     }
   }
   return tokens;

@@ -1,7 +1,12 @@
+/**
+ * Where the operands of a rule call are resolved: in the dictionary of the call, or, for a table or entity
+ * rule, in the dictionary of the table its first operand names; each dot of the scope operator goes one
+ * scope up. Shared by the rule-call checks and the completion of operands, so both resolve a name the same way.
+ */
 import { tokenName } from '../kdic-lexer';
 import { parameterTypeAt, type RuleMaps } from '../rule-maps';
 import type { Argument, RuleCall } from './call-tree';
-import type { BlockTail, Declaration, Dictionary, Structure } from './structure';
+import { dictionariesByName, type BlockTail, type Declaration, type Dictionary, type Structure } from './structure';
 
 /** The variables an operand can name, with how a message calls the dictionary that declares them. */
 export interface Scope {
@@ -24,12 +29,7 @@ export interface ScopeContext {
 }
 
 export function createScopeContext(structure: Structure, rules: RuleMaps): ScopeContext {
-  const dictionaries = new Map<string, Dictionary[]>();
-  for (const dictionary of structure.dictionaries) {
-    const name = dictionary.header.name;
-    if (name) { dictionaries.set(tokenName(name), [...(dictionaries.get(tokenName(name)) ?? []), dictionary]); }
-  }
-  return { rules, dictionaries, names: new Map() };
+  return { rules, dictionaries: dictionariesByName(structure), names: new Map() };
 }
 
 /** The scope of a dictionary's names: its variables and blocks by name (a name declared twice keeps its last declaration). */

@@ -1,6 +1,7 @@
+/** Check of the date and time format metadata (`DateFormat`, `TimeFormat`, `TimestampFormat`, `TimestampTZFormat`). */
 import { formatDocumentationUrl, isValidFormat } from '../date-time-formats';
 import type { KdicToken } from '../kdic-lexer';
-import { FORMAT_METADATA_KEYS } from '../kdic-syntax';
+import { FORMAT_METADATA_KEYS, decodeString } from '../kdic-syntax';
 import type { DiagnosticCollector } from './diagnostics';
 import { tagsAfter, type MetadataInfo, type MetadataTag } from './metadata';
 import type { Declaration } from './structure';
@@ -27,7 +28,7 @@ function checkFormatTag(declaration: Declaration, tag: MetadataTag, out: Diagnos
     return;
   }
 
-  const format = tag.value.text.slice(1, -1).replace(/""/g, '"');
+  const format = decodeString(tag.value.text);
   if (!isValidFormat(expectedType, format)) {
     out.atToken(tag.value, `Invalid ${expectedType} format '${format}' in meta-data '${key}'. `
       + `Valid formats: ${formatDocumentationUrl(expectedType)}`);

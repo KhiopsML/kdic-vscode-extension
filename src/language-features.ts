@@ -10,13 +10,12 @@ import { DERIVATION_RULES, type DerivationRule } from './derivation-rules';
 import { tokenName } from './kdic-lexer';
 import { encodeIdentifier, extractDictionaryNames, FORMAT_METADATA_KEYS } from './kdic-syntax';
 import { operandVariablesAt, type OperandVariables } from './operand-completion';
-import { buildRuleMaps } from './rule-maps';
+import { RULE_MAPS } from './rule-maps';
 import {
   ADVANCED_TYPES, KEYWORDS, METADATA_KEYS, MISSING_VALUE, NATIVE_TYPES, type LanguageEntry,
 } from './language-data';
 
 const UNUSED_KEYWORD = KEYWORDS.find(keyword => keyword.label === 'Unused')!;
-const RULE_MAPS = buildRuleMaps(DERIVATION_RULES);
 
 /**
  * Beyond this many characters, a completion that reads the whole document is too slow (about 100 ms at

@@ -5,17 +5,27 @@
  * the standalone smoke-test CLI. Validation is structural and best-effort;
  * the native Khiops parser stays authoritative for complete semantics.
  *
- * The work is split in focused checks (see `validation/`), run in this order:
- *  1. delimiters      — unbalanced `() [] {}`                              (delimiters.ts)
- *  2. metadata        — `<key=value>` tags                                  (metadata.ts)
- *  3. structure       — dictionaries and declarations, missing `;`, names   (structure.ts)
- *  4. format metadata — `DateFormat` and co. on the wrong type, or a bad value (format-metadata.ts)
- *  5. variable blocks — `VarKey` of each member, default values of the block   (variable-blocks.ts)
- *  6. constants       — numerical and categorical constants in derivations  (constants.ts)
- *  7. dictionaries    — names, key fields, relation targets                 (dictionaries.ts)
- *  8. relations       — root keys, key lengths of the dictionaries reached  (relations.ts)
- *  9. rule calls      — rule return types and argument types, nested calls  (rule-calls.ts)
- * 10. line grammar    — variable blocks, trailing content, unknown lines    (line-grammar.ts)
+ * The work is split in focused checks (see `validation/`), run in this order. This list is the one place that
+ * describes the pipeline: keep it up to date when a check is added, moved or removed.
+ *  1. delimiters      — unclosed, unmatched or wrongly nested `() [] {}`                 (delimiters.ts)
+ *  2. metadata        — locates the `<key>` and `<key=value>` tags, reports malformed ones (metadata.ts)
+ *  3. structure       — one token walk: dictionaries (header, `Root`), declarations (`[key]`, in a variable
+ *                       block or not) and variable blocks (members, tail); reports a missing `;`, an invalid
+ *                       name, a word after a name and a statement that does not start with a type (structure.ts)
+ *  4. format metadata — `DateFormat` and co. on a variable of another type, without a string, or with an
+ *                       unknown format                                                     (format-metadata.ts)
+ *  5. variable blocks — `VarKey` of each member (present, integer 1 to 10⁹ or non-empty string, one kind,
+ *                       unique) and the default value of the block                         (variable-blocks.ts)
+ *  6. constants       — numerical and categorical constants in derivations                (constants.ts)
+ *  7. dictionaries    — name lengths, names used twice (variables and blocks), spaces at the end of names,
+ *                       dictionaries declared twice, key fields, `Table(X)`/`Entity(X)` targets (dictionaries.ts)
+ *  8. relations       — multi-table schema: root key, root as a component, key lengths along native
+ *                       relations, external entities                                       (relations.ts)
+ *  9. rule calls      — each derivation parsed into a tree of calls: return types and argument types
+ *                       (variables, constants, nested calls), each operand checked in the dictionary it is
+ *                       resolved in                                                        (rule-calls.ts)
+ * 10. line grammar    — line by line: variable-block members and closing, content after `;`, unknown lines
+ *                       (warning)                                                          (line-grammar.ts)
  */
 import { tokenizeKdic } from './kdic-lexer';
 import { extractDictionaryNames, stripLineComments } from './kdic-syntax';

@@ -1,3 +1,4 @@
+/** What the checks of `validation/` report to: the document they read and the diagnostics they produce. */
 import type { KdicToken } from '../kdic-lexer';
 
 /** Minimal document interface, satisfied by vscode.TextDocument, `KdicTextDocument` and test mocks. */

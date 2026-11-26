@@ -4,13 +4,10 @@
  * Free of any VS Code dependency: functions take the text of the document and an offset.
  */
 import { partialOperand } from './completion-context';
-import { tokenizeKdic } from './kdic-lexer';
-import { KdicTextDocument } from './kdic-text-document';
 import type { RuleMaps } from './rule-maps';
-import { DiagnosticCollector } from './validation/diagnostics';
-import { scanMetadata } from './validation/metadata';
 import { operandSiteAt } from './validation/operand-site';
-import { scanStructure, type BlockTail, type Declaration } from './validation/structure';
+import { scanDocument } from './validation/scan-document';
+import type { BlockTail, Declaration } from './validation/structure';
 
 export interface OperandVariables {
   /** The variables that the operand can name, in the order of their declaration. */
@@ -31,9 +28,7 @@ export interface OperandVariables {
  */
 export function operandVariablesAt(text: string, offset: number, rules: RuleMaps): OperandVariables | undefined {
   const partial = partialOperand(text.slice(Math.max(0, offset - 400), offset));
-  const collector = new DiagnosticCollector(new KdicTextDocument(text)); // only the structure is of interest here
-  const tokens = tokenizeKdic(text).filter(token => token.kind !== 'comment');
-  const structure = scanStructure(tokens, scanMetadata(tokens, collector), collector, undefined);
+  const { tokens, structure } = scanDocument(text);
 
   const site = operandSiteAt(structure, tokens, rules, offset - partial.length, partial.dots);
   if (!site?.scope) { return undefined; }

@@ -1,3 +1,7 @@
+/**
+ * What is known of the operand being typed in a rule call: the type the rule expects and the scope its variables
+ * are in. It reads the open calls up to the operand, as the rule-call checks read closed ones.
+ */
 import type { KdicToken } from '../kdic-lexer';
 import type { RuleMaps } from '../rule-maps';
 import { ancestorOf, createScopeContext, describeArgument, describeCall, dictionaryScope, type Scope } from './call-scopes';

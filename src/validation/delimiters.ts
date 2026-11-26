@@ -1,3 +1,4 @@
+/** Check of the brackets: `()`, `[]` and `{}` must be closed, matched and nested. */
 import type { KdicToken } from '../kdic-lexer';
 import type { DiagnosticCollector } from './diagnostics';
 

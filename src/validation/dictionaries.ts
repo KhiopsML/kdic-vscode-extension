@@ -1,3 +1,4 @@
+/** Checks of each dictionary taken alone: its name, the names of its variables and blocks, its keys and the targets of its relations. */
 import { isNameToken, tokenName, type KdicToken } from '../kdic-lexer';
 import type { DiagnosticCollector } from './diagnostics';
 import type { Dictionary, DictionaryHeader, Structure } from './structure';

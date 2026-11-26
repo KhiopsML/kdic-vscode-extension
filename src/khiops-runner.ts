@@ -1,6 +1,6 @@
 /**
- * Running the native Khiops parser: locating the executable and loading a
- * dictionary file through a one-shot batch scenario.
+ * Running Khiops: locating the executable, running it, and loading a dictionary
+ * file through a one-shot batch scenario (the native Khiops parser).
  *
  * Free of any VS Code dependency; callers pass in the settings and a trace function.
  */
@@ -12,9 +12,6 @@ import * as path from 'path';
 /** Receives debug messages (a no-op unless the user enabled debug traces). */
 export type Trace = (message: string) => void;
 
-export const KHIOPS_REFERENCE_VERSION = '11.0.2';
-export type KhiopsVersionCheck = (binary: string) => Promise<void>;
-
 const IS_WINDOWS = process.platform === 'win32';
 
 /** Name of the Khiops executable on this platform. */
@@ -25,55 +22,48 @@ const DEFAULT_LOCATION = process.platform === 'darwin'
   ? '/Applications/Khiops.app/Contents/Resources/bin/MODL'
   : process.platform === 'linux' ? '/usr/bin/MODL_openmpi' : undefined;
 
+/** Time Khiops gets to parse a dictionary file before the run is abandoned. */
 const RUN_TIMEOUT_MS = 30_000;
 
-function launchOptions(binary: string, timeout: number): { command: string; options: cp.ExecFileOptions } {
-  const options: cp.ExecFileOptions = { timeout, env: { ...process.env, KHIOPS_PROC_NUMBER: '1' } };
-  let command = binary;
-  if (IS_WINDOWS && path.extname(binary).toLowerCase() === '.cmd') {
-    options.shell = true;
-    if (binary.includes(' ')) { command = `"${binary}"`; }
-  }
-  return { command, options };
+/** What a process printed, and how it ended (`error` is null when it exited with status 0). */
+export interface ProcessResult {
+  stdout: string;
+  stderr: string;
+  error: cp.ExecFileException | null;
 }
 
-export type KhiopsVersionResult =
-  | { ok: true; version: string; output: string }
-  | { ok: false; reason: string; output: string };
+/**
+ * Runs the Khiops executable with `args` and waits for it to end. Never rejects: a process that cannot
+ * be started comes back as `error`. `KHIOPS_PROC_NUMBER=1` keeps Khiops from starting parallel workers.
+ */
+export function execKhiopsProcess(binary: string, args: string[], options: cp.ExecFileOptions): Promise<ProcessResult> {
+  const launch: cp.ExecFileOptions = { ...options, env: { ...process.env, KHIOPS_PROC_NUMBER: '1' } };
+  let command = binary;
+  if (IS_WINDOWS && path.extname(binary).toLowerCase() === '.cmd') { // a batch script needs a shell
+    launch.shell = true;
+    if (binary.includes(' ')) { command = `"${binary}"`; }
+  }
 
-/** Reads the selected executable's full version without running a batch scenario. */
-export async function readKhiopsVersion(binary: string, trace: Trace): Promise<KhiopsVersionResult> {
-  const { command, options } = launchOptions(binary, 5_000);
-  options.maxBuffer = 64 * 1024;
-  options.killSignal = 'SIGKILL';
-  trace(`[Khiops] Running: ${binary} -v`);
+  return new Promise(resolve => {
+    try {
+      cp.execFile(command, args, launch, (error, stdout, stderr) =>
+        resolve({ stdout: stdout?.toString() ?? '', stderr: stderr?.toString() ?? '', error }));
+    } catch (error) { // invalid arguments make `execFile` throw instead of calling back
+      resolve({ stdout: '', stderr: '', error: error as cp.ExecFileException });
+    }
+  });
+}
+
+/** Runs `work` in a new temporary directory under `parent`, then removes the directory, whatever happens. */
+export async function withTemporaryDirectory<T>(
+  parent: string, prefix: string, work: (directory: string) => Promise<T>,
+): Promise<T> {
+  const directory = fs.mkdtempSync(path.join(parent, prefix));
   try {
-    return await new Promise<KhiopsVersionResult>(resolve => {
-      cp.execFile(command, ['-v'], options, (error, stdout, stderr) => {
-        const output = [stdout?.toString(), stderr?.toString()].filter(Boolean).join('\n');
-        trace(`[Khiops] Version output:\n${output}`);
-        if (error) {
-          const reason = error.killed ? `Version command timed out or was killed: ${error.message}` : error.message;
-          trace(`[Khiops] Version detection failed: ${reason}`);
-          resolve({ ok: false, reason, output });
-          return;
-        }
-        const pattern = /^[ \t]*Khiops[ \t]+(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)[ \t]*$/;
-        const versions = new Set(output.split(/\r?\n/).flatMap(line => {
-          const match = pattern.exec(line);
-          return match ? [match[1]] : [];
-        }));
-        if (versions.size !== 1) {
-          resolve({ ok: false, reason: 'Version output contains no unambiguous supported Khiops version.', output });
-          return;
-        }
-        resolve({ ok: true, version: [...versions][0], output });
-      });
-    });
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    trace(`[Khiops] Version detection failed: ${reason}`);
-    return { ok: false, reason, output: '' };
+    return await work(directory);
+  } finally {
+    try { fs.rmSync(directory, { recursive: true, force: true }); }
+    catch { /* best effort: a file still locked (Windows) must not turn a finished run into a failure */ }
   }
 }
 
@@ -127,59 +117,47 @@ function buildCheckScenario(dictionaryPath: string): string {
   ].join('\n');
 }
 
+/** Everything a batch run printed (standard output and error, plus the error log on Windows), and how it ended. */
 export interface KhiopsProcessResult {
   output: string;
   error: cp.ExecFileException | null;
 }
 
-/** Runs a prepared scenario and captures the process output and failure, if any. */
-export function execKhiops(
-  binary: string, scenarioFile: string, logFile: string, timeoutMs: number, trace: Trace,
+/** Runs a batch scenario: writes it to `directory`, which also receives Khiops' log, and runs Khiops on it. */
+export async function execKhiops(
+  binary: string, directory: string, scenario: string, timeoutMs: number, trace: Trace,
 ): Promise<KhiopsProcessResult> {
+  const scenarioFile = path.join(directory, 'scenario.prm');
+  // Windows cannot write the log to /dev/stdout, so it goes to a file that is read back.
+  const logFile = path.join(directory, 'khiops.log');
+  fs.writeFileSync(scenarioFile, scenario, 'utf-8');
+
   const args = ['-b', '-i', scenarioFile, '-e', IS_WINDOWS ? logFile : '/dev/stdout'];
   trace(`[Khiops] Running: ${binary} ${args.join(' ')}`);
+  const { stdout, stderr, error } = await execKhiopsProcess(binary, args, { timeout: timeoutMs });
 
-  const { command, options } = launchOptions(binary, timeoutMs);
-
-  return new Promise(resolve => {
-    cp.execFile(command, args, options, (error, stdout, stderr) => {
-      let logOutput = '';
-      if (IS_WINDOWS) {
-        try { logOutput = fs.readFileSync(logFile, 'utf-8'); }
-        catch { trace(`[Khiops] Could not read output file: ${logFile}`); }
-      }
-
-      if (error) { trace(`[Khiops] Process error: ${error.message}`); }
-      const output = `${stdout?.toString() ?? ''}${stderr?.toString() ?? ''}${logOutput}`;
-      trace(output.trim() ? `[Khiops] Output:\n${output}` : '[Khiops] No output captured');
-      resolve({ output, error });
-    });
-  });
+  let log = '';
+  if (IS_WINDOWS) {
+    try { log = fs.readFileSync(logFile, 'utf-8'); }
+    catch { trace(`[Khiops] Could not read output file: ${logFile}`); }
+  }
+  if (error) { trace(`[Khiops] Process error: ${error.message}`); }
+  const output = stdout + stderr + log;
+  trace(output.trim() ? `[Khiops] Output:\n${output}` : '[Khiops] No output captured');
+  return { output, error };
 }
 
 /**
- * Lets Khiops parse a dictionary file and returns everything it printed
- * (standard output, standard error, and the error log on Windows).
- * Resolves to `undefined` when Khiops could not even be started.
+ * Lets Khiops parse a dictionary file and returns everything it printed.
+ * Resolves to `undefined` when the run could not even be set up (no temporary scenario file).
  */
 export async function runKhiops(binary: string, dictionaryPath: string, trace: Trace): Promise<string | undefined> {
-  const scenarioFile = path.join(os.tmpdir(), `kdic-check-${process.pid}.prm`);
-  // Windows cannot write the log to /dev/stdout, so it goes to a file that is read back.
-  const logFile = path.join(os.tmpdir(), `kdic-check-${process.pid}.out`);
-  const removeQuietly = (file: string): void => { try { fs.unlinkSync(file); } catch { /* already gone */ } };
-
-  try {
-    fs.writeFileSync(scenarioFile, buildCheckScenario(dictionaryPath), 'utf-8');
-    if (IS_WINDOWS) { fs.rmSync(logFile, { force: true }); }
-  } catch {
-    return undefined;
-  }
-
   trace(`[Khiops] Dictionary: ${dictionaryPath}`);
   try {
-    return (await execKhiops(binary, scenarioFile, logFile, RUN_TIMEOUT_MS, trace)).output;
-  } finally {
-    if (IS_WINDOWS) { removeQuietly(logFile); }
-    removeQuietly(scenarioFile);
+    return await withTemporaryDirectory(os.tmpdir(), 'kdic-check-', async directory =>
+      (await execKhiops(binary, directory, buildCheckScenario(dictionaryPath), RUN_TIMEOUT_MS, trace)).output);
+  } catch (error) {
+    trace(`[Khiops] Could not run Khiops: ${String(error)}`);
+    return undefined;
   }
 }

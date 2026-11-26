@@ -1,4 +1,10 @@
-import type { DerivationRule, OperandScope } from './derivation-rules';
+/**
+ * Lookup tables built from the derivation rules: what the parameters of each rule expect, what it returns
+ * and where its operands are resolved. The validator and the completion read them.
+ *
+ * Free of any VS Code dependency.
+ */
+import { DERIVATION_RULES, type DerivationRule, type OperandScope } from './derivation-rules';
 import { isKdicType, TYPE_ALTERNATION } from './kdic-syntax';
 
 /** Rule lookup tables the validator uses to type-check derivations. */
@@ -40,7 +46,7 @@ export function parameterTypeAt(types: readonly string[], position: number): str
   return concrete && varargs > 0 ? types[varargs - 1] : undefined;
 }
 
-/** Builds the validator's lookup tables from rule definitions; call it once at startup. */
+/** Builds the lookup tables from rule definitions; `RULE_MAPS` below holds those of the built-in rules. */
 export function buildRuleMaps(
   rules: ReadonlyArray<Pick<DerivationRule, 'label' | 'returnType' | 'signature' | 'operandScopes'>>,
 ): RuleMaps {
@@ -53,3 +59,6 @@ export function buildRuleMaps(
   }
   return maps;
 }
+
+/** The lookup tables of the built-in rules, shared by everything that reads derivations. */
+export const RULE_MAPS = buildRuleMaps(DERIVATION_RULES);

@@ -1,3 +1,4 @@
+/** Check of the constants written in derivations. */
 import type { KdicToken } from '../kdic-lexer';
 import type { DiagnosticCollector } from './diagnostics';
 import type { MetadataInfo } from './metadata';

@@ -1,3 +1,7 @@
+/**
+ * The parser of a rule call `rule(argument, …)` into a tree of arguments (variables, constants, nested
+ * calls, operands behind the scope operator). It can also read a call left open, as at the cursor while typing.
+ */
 import { isNameToken, type KdicToken } from '../kdic-lexer';
 
 /** Deeper nesting is left unchecked, which keeps the recursion bounded on generated files. */

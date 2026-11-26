@@ -11,13 +11,11 @@
  */
 import * as vscode from 'vscode';
 import { fileHasLoneCarriageReturn } from './carriage-returns';
-import { DERIVATION_RULES } from './derivation-rules';
-import { findKhiopsBinary, runKhiops, type KhiopsVersionCheck, type Trace } from './khiops-runner';
+import { findKhiopsBinary, runKhiops, type Trace } from './khiops-runner';
+import type { KhiopsServices } from './khiops-services';
 import { parseKhiopsErrorLocations } from './khiops-validation';
-import { buildRuleMaps } from './rule-maps';
+import { RULE_MAPS } from './rule-maps';
 import { Severity, validate } from './validator';
-
-const RULES = buildRuleMaps(DERIVATION_RULES);
 
 /** Delay between the last keystroke and the built-in validation. */
 const VALIDATE_DEBOUNCE_MS = 300;
@@ -30,6 +28,9 @@ export class DiagnosticsController implements vscode.Disposable {
   private readonly builtIn = vscode.languages.createDiagnosticCollection('kdic');
   private readonly khiops = vscode.languages.createDiagnosticCollection('khiops');
   private readonly disposables: vscode.Disposable[] = [];
+  private readonly output: vscode.OutputChannel;
+  private readonly trace: Trace;
+  private readonly checkVersion: KhiopsServices['checkVersion'];
 
   /** The Khiops executable, or undefined when native validation is disabled or Khiops is not installed. */
   private khiopsPath: string | undefined;
@@ -43,10 +44,10 @@ export class DiagnosticsController implements vscode.Disposable {
   /** Latest file check of each document, so that a slow, outdated check cannot overwrite a newer one. */
   private readonly fileChecks = new Map<string, number>();
 
-  constructor(
-    private readonly output: vscode.OutputChannel, private readonly trace: Trace,
-    private readonly checkVersion: KhiopsVersionCheck,
-  ) {
+  constructor({ output, trace, checkVersion }: KhiopsServices) {
+    this.output = output;
+    this.trace = trace;
+    this.checkVersion = checkVersion;
     if (this.debugTracesEnabled()) { this.output.show(true); }
     this.refreshKhiops();
 
@@ -141,7 +142,7 @@ export class DiagnosticsController implements vscode.Disposable {
     const editor = vscode.window.activeTextEditor;
     const cursorLine = editor?.document === document ? editor.selection.active.line : undefined;
 
-    const diagnostics = validate(document, RULES, cursorLine).map(found => {
+    const diagnostics = validate(document, RULE_MAPS, cursorLine).map(found => {
       const diagnostic = new vscode.Diagnostic(
         new vscode.Range(found.line, found.col, found.line, found.endCol),
         found.message,

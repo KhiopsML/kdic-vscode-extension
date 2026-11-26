@@ -5,7 +5,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { readKhiopsVersion } = require('../out/khiops-runner');
+const { KHIOPS_REFERENCE_VERSION, readKhiopsVersion, versionWarning } = require('../out/khiops-version');
 
 async function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kdic-version-'));
@@ -33,6 +33,10 @@ if (result.slow) {
   { mode: 0o755 });
   const read = () => readKhiopsVersion(binary, () => {});
   try {
+    assert.strictEqual(versionWarning({ ok: true, version: KHIOPS_REFERENCE_VERSION, output: '' }), undefined);
+    assert.match(versionWarning({ ok: true, version: '11.0.3', output: '' }), /11\.0\.3.*11\.0\.2/);
+    assert.match(versionWarning({ ok: false, reason: 'failed', output: '' }), /could not be determined/);
+
     for (const version of ['11.0.2', '10.3.2', '11.0.3', '12.0.0', '11.0.3-a.0', '11.0.2+custom', '11.0.2-a.0+build.1']) {
       write({ stdout: ` \tKhiops ${version} \t\r\n` });
       const result = await read();

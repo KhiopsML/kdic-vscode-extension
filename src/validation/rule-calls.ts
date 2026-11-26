@@ -1,3 +1,4 @@
+/** Type checks of the rule calls of derivations: return types against variables, arguments against parameters. */
 import { tokenName, type KdicToken } from '../kdic-lexer';
 import { isConcreteType, type RuleMaps } from '../rule-maps';
 import { constantType, isSymbol, parseCall, type RuleCall, type UpperArgument } from './call-tree';
@@ -12,6 +13,20 @@ interface CallContext extends ScopeContext {
   out: DiagnosticCollector;
 }
 
+/** What is known of the argument being checked: the rule that takes it, and the type expected there. */
+interface Slot {
+  ruleName: string;
+  position: number;
+  /** The expected type, or `any` where the argument is not checked. */
+  expected: string;
+}
+
+/** The return type of `rule` when it cannot be `expected`; undefined when it can, or when the rule is not known. */
+function mismatchedReturnType(rules: RuleMaps, rule: string, expected: string): string | undefined {
+  const returnType = rules.returnTypes.get(rule);
+  return returnType && returnType !== 'any' && !returnType.split('|').includes(expected) ? returnType : undefined;
+}
+
 /** A constant must have the type the rule expects; only `Numerical` and `Categorical` have constants. */
 function checkConstant(token: KdicToken, { ruleName, expected, position }: Slot, { out }: CallContext): void {
   const actual = constantType(token);
@@ -20,8 +35,12 @@ function checkConstant(token: KdicToken, { ruleName, expected, position }: Slot,
   out.atToken(token, `Constant ${text} is '${actual}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
 }
 
-/** A variable of the scope, plain or between backquotes, must be declared and have the expected type. */
+/**
+ * A variable of the scope, plain or between backquotes, must be declared and have the expected type.
+ * Nothing is checked where the signature has no type (`any`) or takes a block.
+ */
 function checkVariable(token: KdicToken, { ruleName, expected, position }: Slot, scope: Scope, { out }: CallContext): void {
+  if (expected === 'any' || expected.startsWith('Block(')) { return; }
   const name = tokenName(token);
   const actual = scope.variables.get(name)?.type.text;
   if (actual === undefined) {
@@ -31,20 +50,13 @@ function checkVariable(token: KdicToken, { ruleName, expected, position }: Slot,
   }
 }
 
-/** The result of a nested call must be a type the enclosing rule accepts at that position. */
+/** The result of a nested call must be a type the enclosing rule accepts at that position (when it expects a plain type). */
 function checkNestedResult(nested: RuleCall, { ruleName, expected, position }: Slot, { rules, out }: CallContext): void {
-  const returnType = rules.returnTypes.get(nested.rule.text);
-  if (!returnType || returnType === 'any' || returnType.split('|').includes(expected)) { return; }
-  out.atToken(nested.rule,
-    `'${nested.rule.text}' returns '${returnType}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
-}
-
-/** What is known of the argument being checked: the rule that takes it, and the type expected there. */
-interface Slot {
-  ruleName: string;
-  position: number;
-  /** The expected type, or `any` where the argument is not checked. */
-  expected: string;
+  const returnType = isConcreteType(expected) ? mismatchedReturnType(rules, nested.rule.text, expected) : undefined;
+  if (returnType) {
+    out.atToken(nested.rule,
+      `'${nested.rule.text}' returns '${returnType}' but '${ruleName}' expects '${expected}' for argument ${position + 1}.`);
+  }
 }
 
 /** An argument behind the scope operator: its variable or call is resolved as many scopes up as it has dots. */
@@ -57,13 +69,12 @@ function checkUpperArgument(arg: UpperArgument, slot: Slot, anchor: Scope | unde
       `Scope operator '${arg.dots.map(dot => dot.text).join('')}' goes beyond the depth of the calling rules.`);
   }
   const upper = found === 'beyond' ? undefined : found;
-  const checked = slot.expected !== 'any' && !slot.expected.startsWith('Block(');
 
   if (arg.argument.kind === 'variable') {
-    if (checked && upper) { checkVariable(arg.argument.token, slot, upper, context); }
+    if (upper) { checkVariable(arg.argument.token, slot, upper, context); }
     return;
   }
-  if (checked && isConcreteType(slot.expected)) { checkNestedResult(arg.argument.call, slot, context); }
+  checkNestedResult(arg.argument.call, slot, context);
   checkCall(arg.argument.call, upper, anchor, context);
 }
 
@@ -80,16 +91,15 @@ function checkCall(call: RuleCall, scope: Scope | undefined, anchor: Scope | und
   call.args.forEach((arg, position) => {
     const argument = describeArgument(call, description, position, scope, anchor, context);
     const slot: Slot = { ruleName: call.rule.text, position, expected: argument.expected };
-    const checked = argument.expected !== 'any' && !argument.expected.startsWith('Block(');
 
     if (arg.kind === 'upper') {
       checkUpperArgument(arg, slot, argument.anchor, context);
     } else if (arg.kind === 'call') {
-      if (checked && isConcreteType(argument.expected)) { checkNestedResult(arg.call, slot, context); }
+      checkNestedResult(arg.call, slot, context);
       checkCall(arg.call, argument.scope, argument.anchor, context);
-    } else if (arg.kind === 'constant' && checked) {
+    } else if (arg.kind === 'constant') {
       checkConstant(arg.token, slot, context);
-    } else if (arg.kind === 'variable' && checked && argument.scope) {
+    } else if (arg.kind === 'variable' && argument.scope) {
       checkVariable(arg.token, slot, argument.scope, context);
     }
   });
@@ -97,10 +107,11 @@ function checkCall(call: RuleCall, scope: Scope | undefined, anchor: Scope | und
 
 /** The declared type of `Type name = rule(…)` must be one the rule can return. */
 function checkReturnType(declaration: Declaration, call: RuleCall, { rules, out }: CallContext): void {
-  const returnType = rules.returnTypes.get(call.rule.text);
-  if (!returnType || returnType === 'any' || returnType.split('|').includes(declaration.type.text)) { return; }
-  out.atToken(declaration.type,
-    `'${call.rule.text}' returns '${returnType}' but variable is declared as '${declaration.type.text}'.`);
+  const returnType = mismatchedReturnType(rules, call.rule.text, declaration.type.text);
+  if (returnType) {
+    out.atToken(declaration.type,
+      `'${call.rule.text}' returns '${returnType}' but variable is declared as '${declaration.type.text}'.`);
+  }
 }
 
 /** Checks every derivation of a dictionary: `= rule(…)`, with the rules nested in it. */

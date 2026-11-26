@@ -1,3 +1,9 @@
+/**
+ * A plain-text document, for the code that has no VS Code document: the tests, the smoke-test CLI and the
+ * reading of Khiops output.
+ *
+ * Free of any VS Code dependency.
+ */
 import type { KdicDocument } from './validation/diagnostics';
 
 /**

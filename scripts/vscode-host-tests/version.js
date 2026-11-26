@@ -175,7 +175,7 @@ fi
 
     if (process.env.KDIC_VSCODE_REAL_KHIOPS) {
       const binary = process.env.KDIC_VSCODE_REAL_KHIOPS;
-      const { readKhiopsVersion, KHIOPS_REFERENCE_VERSION } = require(path.join(extension.extensionPath, 'out', 'khiops-runner'));
+      const { readKhiopsVersion, KHIOPS_REFERENCE_VERSION } = require(path.join(extension.extensionPath, 'out', 'khiops-version'));
       const result = await readKhiopsVersion(binary, () => {});
       assert.ok(result.ok, JSON.stringify(result));
       assert.strictEqual(result.version, '11.0.3-a.0');

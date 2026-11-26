@@ -1,3 +1,7 @@
+/**
+ * The line-oriented check, the last of the pipeline: what the token checks do not see, line by line. Variable-block
+ * members and closing, content after a `;`, and the lines that match no known construct (a warning).
+ */
 import { tokenizeKdic } from '../kdic-lexer';
 import {
   IDENTIFIER_PATTERN as IDENTIFIER, METADATA_PATTERN as METADATA, TYPE_ALTERNATION,
@@ -185,38 +189,56 @@ class LineGrammarChecker {
     this.trackContinuation(line);
   }
 
-  /** Variable blocks: `{` opens one inside a dictionary, `} Name;` closes it. */
+  /**
+   * Variable blocks: `{` opens one inside a dictionary, `} Name;` closes it, and the member lines in
+   * between are checked one by one (the `VarKey` and default values are checked on tokens, in `variable-blocks.ts`).
+   */
   private checkVariableBlock(line: Line): void {
-    const { effective, effectiveCode, depthBefore, index, indentation } = line;
+    const { effective, depthBefore } = line;
     if (depthBefore === 1 && effective === '{') {
       this.inVariableBlock = true;
       this.variableBlockType = undefined;
-    } else if (this.inVariableBlock && depthBefore === 2 && effective.startsWith('}')) {
-      if (!VARIABLE_BLOCK_CLOSE.test(effective)) {
-        const col = line.raw.indexOf('}');
-        this.out.atLine(index, col, col + 1, "Variable block must have a name and ';' after its closing brace.");
-      }
+      return;
+    }
+    if (!this.inVariableBlock || depthBefore !== 2) { return; }
+
+    if (effective.startsWith('}')) {
+      this.checkBlockClose(line);
       this.inVariableBlock = false;
       this.variableBlockType = undefined;
-    } else if (this.inVariableBlock && depthBefore === 2 && effective.length > 0) {
-      const member = VARIABLE_BLOCK_MEMBER.exec(effective);
-      if (member) {
-        const memberCode = effectiveCode.slice(0, effectiveCode.indexOf(';') + 1);
-        if (memberCode.includes('=')) {
-          const col = indentation + effective.indexOf('=');
-          this.out.atLine(index, col, col + 1, 'Variable block members cannot be derived individually.');
-        }
-        if (this.variableBlockType === undefined) {
-          this.variableBlockType = member[1];
-        } else if (member[1] !== this.variableBlockType) {
-          const col = indentation + effective.indexOf(member[1]);
-          this.out.atLine(index, col, col + member[1].length, 'Variable block members must all have the same type.');
-        }
-      } else if (DECLARATION_START.test(effective)) {
-        const type = DECLARATION_START.exec(effective)![2];
-        const col = indentation + effective.indexOf(type);
-        this.out.atLine(index, col, col + type.length, 'Variable block members must be Numerical, Categorical, or Table.');
+    } else if (effective.length > 0) {
+      this.checkBlockMember(line);
+    }
+  }
+
+  /** The closing brace of a block is followed by its name and a `;`. */
+  private checkBlockClose({ effective, raw, index }: Line): void {
+    if (VARIABLE_BLOCK_CLOSE.test(effective)) { return; }
+    const col = raw.indexOf('}');
+    this.out.atLine(index, col, col + 1, "Variable block must have a name and ';' after its closing brace.");
+  }
+
+  /** A member is a `Numerical`, `Categorical` or `Table` variable, of the type of the block, not derived on its own. */
+  private checkBlockMember({ effective, effectiveCode, index, indentation }: Line): void {
+    const member = VARIABLE_BLOCK_MEMBER.exec(effective);
+    if (!member) {
+      const declaredType = DECLARATION_START.exec(effective)?.[2];
+      if (declaredType) {
+        const col = indentation + effective.indexOf(declaredType);
+        this.out.atLine(index, col, col + declaredType.length, 'Variable block members must be Numerical, Categorical, or Table.');
       }
+      return;
+    }
+
+    const type = member[1];
+    if (effectiveCode.slice(0, effectiveCode.indexOf(';') + 1).includes('=')) {
+      const col = indentation + effective.indexOf('=');
+      this.out.atLine(index, col, col + 1, 'Variable block members cannot be derived individually.');
+    }
+    this.variableBlockType ??= type;
+    if (type !== this.variableBlockType) {
+      const col = indentation + effective.indexOf(type);
+      this.out.atLine(index, col, col + type.length, 'Variable block members must all have the same type.');
     }
   }
 

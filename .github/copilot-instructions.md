@@ -3,9 +3,35 @@
 VS Code extension providing language support for `.kdic` files (Khiops dictionary format).
 **Entirely AI-maintained.** Grammar reference: <https://khiops.org/api-docs/kdic/dictionary-files/>
 
+## Code quality: simple to maintain
+
+This code is read and changed far more often than it is written, by sessions that start without memory of the
+previous ones. A change is not done when it works: it is done when the code is **no more complex than before**.
+
+- **As simple as possible.** The simplest design that meets the spec. No speculative option, parameter, layer or
+  abstraction; a flag or parameter that one caller uses is inlined. Prefer a table or a map to a long `if` chain,
+  and early returns to deep nesting. A clever one-liner loses to three plain lines.
+- **Readable.** A function does one thing, fits on a screen (about 40 lines; more only for a flat table or a flat
+  sequence of steps), takes at most four parameters (past that, pass one object, as `KhiopsServices`) and has a
+  name that says what it does. A long state machine is a class whose methods each handle one kind of token
+  (`StructureScanner`). Names come from the domain (`declaration`, `scope`, `operand`), not `data`, `info`, `tmp`.
+- **Commented.** Every module opens with a comment saying what it is for. Every function and exported type has a
+  `/** … */` saying what it does or returns. Comment the *why* and the tricky step: what was measured on Khiops,
+  which spec requirement a rule serves, why a case is left alone. Do not comment what the line says.
+- **No duplication.** Search before writing a helper. When the same logic appears twice, move it where both can
+  import it (`scanDocument`, `RULE_MAPS`, `dictionariesByName`, `withTemporaryDirectory`). One source of truth
+  per fact, in code and in docs (the validation pipeline is described only at the top of `src/validator.ts`).
+- **Step back after each feature.** `openspec/` adds one change at a time, each grafted onto the previous code.
+  Once a change works, reread the modules it touched, and the neighbours that now do something similar, as a
+  whole: merge layers that became redundant, delete what no longer applies (code, comments, docs, tests of removed
+  behavior). A pure simplification keeps the behavior: unit tests and corpus check pass unchanged.
+- **Keep the stack flat.** Archive an OpenSpec change (`/opsx:archive`) once it is implemented and committed, so that
+  `openspec/specs/` is the one description of the behavior and `openspec/changes/` holds only work in progress.
+- **Keep the docs in step.** Add, split or remove a module: update the module table here and in `README.md`.
+
 ## Architecture
 
-Only five modules import `vscode`; everything else is plain TypeScript that the unit tests and
+Only six modules import `vscode`; everything else is plain TypeScript that the unit tests and
 the smoke-test CLI load directly from `out/`.
 
 | Module | Role |
@@ -15,19 +41,21 @@ the smoke-test CLI load directly from `out/`.
 | `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save *(vscode)* |
 | `src/carriage-returns.ts` | Detects files holding isolated `\r`, for which built-in diagnostics are off *(imports vscode)* |
 | `src/dictionary-creation.ts` | Command UI for creating a dictionary from a data file *(vscode)* |
+| `src/khiops-services.ts` | `KhiopsServices` (the `Khiops` output channel, debug traces, the version check) shared by the features that run Khiops, and `showErrorWithOutput()` *(vscode)* |
 | `src/dictionary-builder.ts` | Builds the Khiops creation scenario and safely publishes the result |
 | `src/kdic-text-document.ts` | `KdicTextDocument`: plain text with a line index (`KdicDocument`; used by tests, the CLI and Khiops-output parsing) |
 | `src/derivation-rules.ts` | `DERIVATION_RULES`: ~300 built-in rules (completion, hover, type checking) |
 | `src/date-time-formats.ts` | `formatsOf()`, `isValidFormat()`: the date, time, timestamp and timestamp-tz formats Khiops documents |
 | `src/language-data.ts` | `KEYWORDS`, `NATIVE_TYPES`, `ADVANCED_TYPES`, `METADATA_KEYS`, `MISSING_VALUE` (completion, hover) |
-| `src/rule-maps.ts` | `buildRuleMaps()`: parameter-type, return-type and operand-scope maps built from the rules |
+| `src/rule-maps.ts` | `buildRuleMaps()`, and `RULE_MAPS` of the built-in rules: parameter-type, return-type and operand-scope maps |
 | `src/kdic-syntax.ts` | `KDIC_TYPES`, `FORMAT_METADATA_KEYS`, identifier/metadata regex sources, `stripLineComments`, `maskQuoted`, `extractDictionaryNames` |
 | `src/kdic-lexer.ts` | `tokenizeKdic()`: tokens with offsets, comments and quote state |
 | `src/completion-context.ts` | Cursor context for completion (comment? derivation? inside a dictionary? on a metadata key? which type does the open rule call expect? the operand being typed and its leading dots) |
 | `src/operand-completion.ts` | `operandVariablesAt()`: the variables and variable blocks an operand can name, from the text and an offset (no `vscode`). Scans the whole text, so `language-features.ts` skips it above `MAX_ANALYZED_CHARS` |
-| `src/validator.ts` | `validate(document, rules, cursorLine?)`: runs the checks below, returns `KdicDiagnostic[]` |
+| `src/validator.ts` | `validate(document, rules, cursorLine?)`: runs the checks listed at its top, returns `KdicDiagnostic[]` |
 | `src/validation/*.ts` | The individual checks (below) |
-| `src/khiops-runner.ts` | Finds the Khiops binary and runs it on a dictionary file |
+| `src/khiops-runner.ts` | Finds the Khiops binary, runs it (`execKhiopsProcess`, batch scenarios in a temporary directory) and runs it on a dictionary file |
+| `src/khiops-version.ts` | `KHIOPS_REFERENCE_VERSION`, `readKhiopsVersion()` (`-v`), `versionWarning()` |
 | `src/khiops-validation.ts` | Turns Khiops output into `{ line, message }` locations |
 
 Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets are in
@@ -35,26 +63,9 @@ Syntax highlighting is declarative (`syntaxes/kdic.tmLanguage.json`); snippets a
 
 ### Built-in validation pipeline (`validator.ts`)
 
-`validate()` tokenizes once, then runs these checks in order. Each is a focused function in `src/validation/`:
-
-1. `delimiters.ts` — unclosed / unmatched / wrongly nested `()`, `[]`, `{}`
-2. `metadata.ts` — locates `<key>`, `<key=value>` tags and reports malformed ones
-3. `structure.ts` — one token walk building the **structure** (dictionaries, their headers with the `Root`
-   keyword, declarations with their `[key]` and whether they are in a variable block, and the variable blocks with
-   their members and the `;` of their tail); reports missing `;`, invalid variable names, a word after a name and
-   a statement that does not start with a type
-4. `format-metadata.ts` — `DateFormat`/`TimeFormat`/`TimestampFormat`/`TimestampTZFormat` on a variable
-   of another type, without a string value, or with an unknown format
-5. `variable-blocks.ts` — `VarKey` of each block member (present, integer 1 to 10⁹ or non-empty string, one kind,
-   unique) and the default value of the block
-6. `constants.ts` — numerical and categorical constants inside derivations
-7. `dictionaries.ts` — per dictionary: name lengths, names used twice (variables and blocks), spaces at the end of
-   names, dictionaries declared twice, key fields, `Table(X)`/`Entity(X)` targets
-8. `relations.ts` — multi-table schema: root key, root as a component, key lengths along native relations,
-   external entities (`[key]`)
-9. `rule-calls.ts` — parses each derivation into a tree of calls and checks return types and argument types
-   (variables, constants, and the results of nested calls), tracking the dictionary each operand is resolved in (current, or that of the table of a table/entity rule)
-10. `line-grammar.ts` — line by line: variable blocks, content after `;`, unknown lines (warning)
+`validate()` tokenizes once, then runs ten checks in order, each a focused function of `src/validation/`.
+The ordered list, with what each check reports, is at the top of `src/validator.ts`: keep it there, and
+up to date when a check is added, moved or removed.
 
 Every rule of `variable-blocks.ts`, `relations.ts` and the name checks was measured on the Khiops binary before it
 was written (a dictionary that Khiops accepts must give no error here). To keep that true, run the corpus scan
@@ -62,6 +73,9 @@ was written (a dictionary that Khiops accepts must give no error here). To keep 
 
 `diagnostics.ts` holds `KdicDocument`, `KdicDiagnostic`, `Severity` and the `DiagnosticCollector`
 the checks report to. All diagnostics are published with `source = 'kdic'`.
+
+`structure.ts` builds the structure (`StructureScanner`) that most checks read; `scan-document.ts` builds it
+without checking anything, for the code that only needs what a document declares (completion, Khiops output).
 
 `rule-calls.ts` and variable completion share three modules, so that both resolve an operand the same way:
 `call-tree.ts` (parser of a call, which can also read a call left open at the cursor), `call-scopes.ts`
@@ -85,9 +99,10 @@ and `operand-site.ts` (what is known of the operand at an offset, used by `opera
 - Dictionary creation is available from the Explorer, editor tab and Command Palette; it asks whether
   the data has a header, uses `kdic.khiopsPath` independently of validation settings, and reports
   errors in a notification, with failed run output in the shared `Khiops` output channel.
-- `extension.ts` shares an in-flight version-check cache between both features, once per resolved
+- `khiops-services.ts` shares an in-flight version-check cache between both features, once per resolved
   executable path per activation. Before an eligible batch run, `readKhiopsVersion()` invokes `-v`
-  with a five-second timeout and compares the full version with `KHIOPS_REFERENCE_VERSION`.
+  with a five-second timeout and compares the full version with `KHIOPS_REFERENCE_VERSION`
+  (`khiops-version.ts`).
   Any difference or detection failure warns without awaiting dismissal or publishing diagnostics;
   details and Show Output use the shared channel even with debug traces off. Checks are not retried
   until the next activation for that path. Native validation rechecks document/configuration currency
@@ -120,7 +135,7 @@ Automated tests: `npm test`. VS Code host tests: see `README.md`.
   smoke test pick it up after recompiling.
 - Diagnostic severity: **Error** for definite violations (type mismatch, missing `;`, unknown
   reference); **Warning** for unrecognised lines and undeclared argument-variable references.
-- Keep modules free of `vscode` unless they need it, and every function short and commented.
+- Keep modules free of `vscode` unless they need it; the rules above ("Code quality") apply to every change.
 
 ## Khiops version of reference
 
@@ -141,7 +156,7 @@ pre-release); the corpus (`corpus-expectations.json`) was checked with the same 
 2. Run the corpus check with a Khiops binary of that version: `node scripts/smoke-test.js --expected corpus-expectations.json`,
    then `--update-expected` for what changed. No error may be reported on a file that Khiops accepts.
 3. Write the new version in `README.md` (twice), `README.extension.md`, in this section and in
-   `KHIOPS_REFERENCE_VERSION` in `src/khiops-runner.ts`. This constant targets the documented version,
+   `KHIOPS_REFERENCE_VERSION` in `src/khiops-version.ts`. This constant targets the documented version,
    not the binary used for individual behavior measurements.
 
 ## Temporary workarounds

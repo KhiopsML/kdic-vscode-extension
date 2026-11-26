@@ -1,3 +1,7 @@
+/**
+ * The structure of a document, built by one walk over its tokens: its dictionaries (header, declarations,
+ * variable blocks) and the lines they cover. The checks that follow read this structure instead of the tokens.
+ */
 import { isNameToken, tokenName, type KdicToken } from '../kdic-lexer';
 import { isKdicType } from '../kdic-syntax';
 import type { DiagnosticCollector } from './diagnostics';
@@ -76,6 +80,16 @@ export interface Structure {
   rejectedLines: Set<number>;
   /** Lines holding the `;` that follows a dictionary's closing brace. */
   terminatorLines: Set<number>;
+}
+
+/** The dictionaries of the file by name, in document order: a name declared twice has several. */
+export function dictionariesByName(structure: Structure): Map<string, Dictionary[]> {
+  const byName = new Map<string, Dictionary[]>();
+  for (const dictionary of structure.dictionaries) {
+    const name = dictionary.header.name;
+    if (name) { byName.set(tokenName(name), [...(byName.get(tokenName(name)) ?? []), dictionary]); }
+  }
+  return byName;
 }
 
 /** Parses a header; anything before `Dictionary` (such as `Root` or a previous `;`) is ignored. */
@@ -187,154 +201,205 @@ function wordAfterName(next: KdicToken | undefined): KdicToken | undefined {
 }
 
 /**
- * Walks the significant tokens once and builds the document's structure:
- * dictionaries, their declarations, and the lines they cover.
+ * Walks the significant tokens once and builds the document's structure: dictionaries, their declarations,
+ * the variable blocks, and the lines they cover.
  *
- * Along the way it reports a missing `;` after a declaration or after a
- * dictionary's closing brace, and invalid variable names. A declaration that
- * is still being typed (last line, or the cursor line) is not reported.
+ * It follows the braces (a dictionary is at depth 1, a variable block at depth 2) and, inside them, the
+ * statements: a declaration is `[Unused] Type name [= rule] ;`. Along the way it reports a missing `;`
+ * after a declaration or after a dictionary's closing brace, and invalid variable names. A declaration
+ * that is still being typed (last line, or the cursor line) is not reported.
  */
-export function scanStructure(
-  tokens: readonly KdicToken[],
-  metadata: MetadataInfo,
-  out: DiagnosticCollector,
-  cursorLine: number | undefined,
-): Structure {
-  const structure: Structure = { dictionaries: [], declarationLines: new Set(), terminatorLines: new Set(), rejectedLines: new Set() };
-  const document = out.document;
-  const lineOf = (token: KdicToken): number => out.lineOf(token.start);
-
-  let braceDepth = 0;
-  // Open `(` / `[` of the current statement: separators inside them do not end a declaration.
-  let groupDepth = 0;
-  // Set right after a variable block's `}`: its `Name [= rule] ;` tail is not a declaration.
-  let afterBlockClose = false;
-  // The tail being read after a variable block's `}`, once its name is seen.
-  let blockTail: BlockTail | undefined;
-  // The variables declared in the variable block being read, which its tail takes over.
-  let blockMembers: Declaration[] = [];
-  // Whether the next token starts a statement: right after a `{` or a `;` that ends one.
-  let statementStart = false;
-  let pending: Declaration | undefined;
-  let headerStart = 0;
-  let dictionary: Dictionary | undefined;
-
-  /** Ends the pending declaration at `endIndex` and reports its missing `;`. */
-  const endWithoutSemicolon = (endIndex: number): void => {
-    if (!pending) { return; }
-    pending.endIndex = endIndex;
-    const { line, character } = document.positionAt(pending.start.start);
-    if (line < document.lineCount - 1 && line !== cursorLine) {
-      out.atLine(line, character, document.lineAt(line).text.trimEnd().length,
-        "Missing ';' at end of variable declaration.");
-    }
-    pending = undefined;
+class StructureScanner {
+  private readonly structure: Structure = {
+    dictionaries: [], declarationLines: new Set(), terminatorLines: new Set(), rejectedLines: new Set(),
   };
 
-  for (let index = 0; index < tokens.length; index++) {
+  private braceDepth = 0;
+  /** Open `(` / `[` of the current statement: separators inside them do not end a declaration. */
+  private groupDepth = 0;
+  /** The dictionary being read, between its `{` and its `}`. */
+  private dictionary: Dictionary | undefined;
+  /** Index of the first token after the previous dictionary: where the next header starts. */
+  private headerStart = 0;
+  /** Whether the next token starts a statement: right after a `{` or a `;` that ends one. */
+  private statementStart = false;
+  /** The declaration being read, until its `;` or the start of the next declaration. */
+  private pending: Declaration | undefined;
+
+  /** The variables declared in the variable block being read, which its tail takes over. */
+  private blockMembers: Declaration[] = [];
+  /** Set right after a variable block's `}`: its `Name [= rule] ;` tail is not a declaration. */
+  private afterBlockClose = false;
+  /** The tail being read after a variable block's `}`, once its name is seen. */
+  private blockTail: BlockTail | undefined;
+
+  constructor(
+    private readonly tokens: readonly KdicToken[],
+    private readonly metadata: MetadataInfo,
+    private readonly out: DiagnosticCollector,
+    private readonly cursorLine: number | undefined,
+  ) {}
+
+  scan(): Structure {
+    for (let index = 0; index < this.tokens.length; index++) {
+      if (!this.metadata.tokenIndices.has(index)) { this.visit(index); }
+    }
+    this.endWithoutSemicolon(this.tokens.length);
+    return this.structure;
+  }
+
+  private lineOf(token: KdicToken): number {
+    return this.out.lineOf(token.start);
+  }
+
+  /** Updates the state with the token at `index`. */
+  private visit(index: number): void {
+    const token = this.tokens[index];
+    const symbol = token.kind === 'symbol' ? token.text : undefined;
+    if (symbol && this.visitBracket(symbol, index)) { return; }
+
+    // Outside a dictionary, or inside the parentheses of a call or key list: nothing starts or ends here.
+    if (this.groupDepth > 0 || this.braceDepth === 0) { return; }
+
+    if (symbol === '=') { this.visitEquals(index); }
+    else if (symbol === ';') { this.visitSemicolon(index); }
+    else if (this.afterBlockClose) { this.visitBlockTail(token); }
+    else { this.visitStatementToken(index); }
+  }
+
+  /** Handles a bracket; false for any other symbol. */
+  private visitBracket(symbol: string, index: number): boolean {
+    switch (symbol) {
+      case '(': case '[': this.groupDepth++; return true;
+      case ')': case ']': this.groupDepth = Math.max(0, this.groupDepth - 1); return true;
+      case '{': this.openBrace(index); return true;
+      case '}': this.closeBrace(index); return true;
+      default: return false;
+    }
+  }
+
+  // ─────────────────────────── Braces ────────────────────────────────────────
+
+  /** A `{` opens a dictionary (depth 1) or a variable block inside one (depth 2). */
+  private openBrace(index: number): void {
+    if (this.braceDepth === 0) { this.openDictionary(index); }
+    this.braceDepth++;
+    if (this.braceDepth === 2) { this.blockMembers = []; }
+    this.statementStart = true;
+    this.groupDepth = 0;
+  }
+
+  /** Starts the dictionary whose `{` is at `openIndex`, with the header written since the previous dictionary. */
+  private openDictionary(openIndex: number): void {
+    const headerTokens: KdicToken[] = [];
+    for (let index = this.headerStart; index < openIndex; index++) {
+      if (!this.metadata.tokenIndices.has(index)) { headerTokens.push(this.tokens[index]); }
+    }
+    this.dictionary = {
+      headerTokens, header: parseHeader(headerTokens),
+      openIndex, closeIndex: this.tokens.length, declarations: [], blocks: [],
+    };
+    this.structure.dictionaries.push(this.dictionary);
+  }
+
+  /** A `}` ends the declaration being read, then the variable block (depth 2) or the dictionary (depth 1). */
+  private closeBrace(index: number): void {
+    this.endWithoutSemicolon(index);
+    if (this.braceDepth === 1) { this.closeDictionary(index); }
+    this.afterBlockClose = this.braceDepth > 1;
+    this.blockTail = undefined;
+    this.statementStart = false;
+    this.braceDepth = Math.max(0, this.braceDepth - 1);
+    this.groupDepth = 0;
+  }
+
+  /** The closing brace of a dictionary must be followed by `;`. */
+  private closeDictionary(closeIndex: number): void {
+    const next = this.tokens[closeIndex + 1];
+    if (next?.text !== ';') { this.out.at(this.tokens[closeIndex].start, 1, "Missing ';' after closing brace of dictionary."); }
+    else { this.structure.terminatorLines.add(this.lineOf(next)); }
+    this.dictionary!.closeIndex = closeIndex;
+    this.dictionary = undefined;
+    this.headerStart = closeIndex + 1;
+  }
+
+  // ─────────────────────────── Statements ────────────────────────────────────
+
+  /** The `=` of a derivation: that of the declaration being read, or of a variable block's tail. */
+  private visitEquals(index: number): void {
+    if (this.pending) { this.pending.equalsIndex = index; }
+    else if (this.blockTail && this.blockTail.equalsIndex === undefined) { this.blockTail.equalsIndex = index; }
+  }
+
+  /** A `;` ends the declaration being read, or a variable block's tail, and starts a new statement. */
+  private visitSemicolon(index: number): void {
+    const semicolon = this.tokens[index];
+    if (this.pending) {
+      this.pending.endIndex = index;
+      for (let line = this.lineOf(this.pending.start); line <= this.lineOf(semicolon); line++) {
+        this.structure.declarationLines.add(line);
+      }
+    }
+    if (this.blockTail) { this.blockTail.endIndex = index; }
+    this.pending = undefined;
+    this.blockTail = undefined;
+    this.afterBlockClose = false;
+    this.statementStart = true;
+  }
+
+  /** The first name after a variable block's `}` is the name of the block as a whole. */
+  private visitBlockTail(token: KdicToken): void {
+    if (this.blockTail || !isNameLike(token)) { return; }
+    this.blockTail = { name: token, nameText: tokenName(token), members: this.blockMembers };
+    this.dictionary!.blocks.push(this.blockTail);
+  }
+
+  /** Any other token of a dictionary: where a statement starts, a declaration may start. */
+  private visitStatementToken(index: number): void {
+    if (this.statementStart && !this.pending) {
+      this.statementStart = false;
+      const rejected = checkStatementStart(this.tokens, index, this.out);
+      if (rejected) { this.structure.rejectedLines.add(this.lineOf(rejected)); }
+    }
+
+    const nameIndex = declarationHeadEnd(this.tokens, index);
+    if (nameIndex >= 0 && this.isDeclarationStart(index)) { this.startDeclaration(index, nameIndex); }
+  }
+
+  /**
+   * Whether the declaration head found at `index` starts a declaration. It does not when it is part of the
+   * pending declaration's own head, a value after `=`, the type after `Unused`, or follows a word on its line
+   * without a declaration being pending.
+   */
+  private isDeclarationStart(index: number): boolean {
+    const { pending } = this;
+    if (pending && index <= pending.nameIndex) { return false; }
+    const previous = this.tokens[index - 1];
+    if (previous?.text === '=' || previous?.text === 'Unused') { return false; }
+    return pending !== undefined || !isNameLike(previous) || this.lineOf(previous) !== this.lineOf(this.tokens[index]);
+  }
+
+  /** Starts the declaration whose head begins at `index` and whose name is at `nameIndex`. */
+  private startDeclaration(index: number, nameIndex: number): void {
+    const { tokens, out } = this;
     const token = tokens[index];
-    if (metadata.tokenIndices.has(index)) { continue; }
-
-    if (token.kind === 'symbol') {
-      if (token.text === '(' || token.text === '[') { groupDepth++; continue; }
-      if (token.text === ')' || token.text === ']') { groupDepth = Math.max(0, groupDepth - 1); continue; }
-
-      if (token.text === '{') {
-        if (braceDepth === 0) {
-          const headerTokens: KdicToken[] = [];
-          for (let k = headerStart; k < index; k++) {
-            if (!metadata.tokenIndices.has(k)) { headerTokens.push(tokens[k]); }
-          }
-          dictionary = {
-            headerTokens, header: parseHeader(headerTokens),
-            openIndex: index, closeIndex: tokens.length, declarations: [], blocks: [],
-          };
-          structure.dictionaries.push(dictionary);
-        }
-        braceDepth++;
-        if (braceDepth === 2) { blockMembers = []; }
-        statementStart = true;
-        groupDepth = 0;
-        continue;
-      }
-
-      if (token.text === '}') {
-        endWithoutSemicolon(index);
-        if (braceDepth === 1) {
-          // End of a dictionary: it must be followed by `;`.
-          const next = tokens[index + 1];
-          if (next?.text !== ';') { out.at(token.start, 1, "Missing ';' after closing brace of dictionary."); }
-          else { structure.terminatorLines.add(lineOf(next)); }
-          dictionary!.closeIndex = index;
-          dictionary = undefined;
-          headerStart = index + 1;
-        }
-        afterBlockClose = braceDepth > 1;
-        blockTail = undefined;
-        statementStart = false;
-        braceDepth = Math.max(0, braceDepth - 1);
-        groupDepth = 0;
-        continue;
-      }
-    }
-
-    // Outside a dictionary, or inside the parentheses of a call or key list.
-    if (groupDepth > 0 || braceDepth === 0) { continue; }
-
-    if (token.kind === 'symbol' && token.text === '=') {
-      if (pending) { pending.equalsIndex = index; }
-      else if (blockTail && blockTail.equalsIndex === undefined) { blockTail.equalsIndex = index; }
-      continue;
-    }
-    if (token.kind === 'symbol' && token.text === ';') {
-      if (pending) {
-        pending.endIndex = index;
-        for (let line = lineOf(pending.start); line <= lineOf(token); line++) { structure.declarationLines.add(line); }
-      }
-      pending = undefined;
-      afterBlockClose = false;
-      statementStart = true;
-      if (blockTail) { blockTail.endIndex = index; }
-      blockTail = undefined;
-      continue;
-    }
-    if (afterBlockClose) {
-      if (!blockTail && isNameLike(token)) {
-        blockTail = { name: token, nameText: tokenName(token), members: blockMembers };
-        dictionary!.blocks.push(blockTail);
-      }
-      continue;
-    }
-    if (statementStart && !pending) {
-      statementStart = false;
-      const rejected = checkStatementStart(tokens, index, out);
-      if (rejected) { structure.rejectedLines.add(lineOf(rejected)); }
-    }
-
-    // Does a declaration start here?
-    const nameIndex = declarationHeadEnd(tokens, index);
-    if (nameIndex < 0) { continue; }
-    if (pending && index <= pending.nameIndex) { continue; } // still inside the pending declaration's own head
-    const previous = tokens[index - 1];
-    if (previous?.text === '=' || previous?.text === 'Unused') { continue; } // a value, or the type of an `Unused` declaration
-    if (!pending && isNameLike(previous) && lineOf(previous) === lineOf(token)) { continue; }
-
     const name = tokens[nameIndex];
     if (!isNameLike(name)) {
       out.at(name?.start ?? token.end, name?.text.length ?? 1, 'Invalid variable name.');
-      continue;
+      return;
     }
-    endWithoutSemicolon(index); // a new declaration ends the previous one that lacks its `;`
+    this.endWithoutSemicolon(index); // a new declaration ends the previous one that lacks its `;`
 
     const typeIndex = index + (token.text === 'Unused' ? 1 : 0);
     const declaration: Declaration = {
       start: token, type: tokens[typeIndex], name, nameText: tokenName(name), nameIndex,
-      relationTarget: relationTargetAt(tokens, typeIndex), joinKeys: joinKeysAt(tokens, nameIndex + 1), inBlock: braceDepth === 2,
+      relationTarget: relationTargetAt(tokens, typeIndex), joinKeys: joinKeysAt(tokens, nameIndex + 1), inBlock: this.braceDepth === 2,
       wordAfterName: wordAfterName(tokens[nameIndex + 1]),
     };
-    pending = declaration;
-    dictionary!.declarations.push(declaration);
-    if (declaration.inBlock) { blockMembers.push(declaration); }
+    this.pending = declaration;
+    this.dictionary!.declarations.push(declaration);
+    if (declaration.inBlock) { this.blockMembers.push(declaration); }
+
     if (isInvalidVariableName(name, tokens[nameIndex + 1])) {
       out.atToken(name, 'Invalid variable name.');
     } else if (declaration.wordAfterName) {
@@ -342,6 +407,27 @@ export function scanStructure(
         `Unexpected '${tokenName(declaration.wordAfterName)}' after variable name '${declaration.nameText}': ';' expected. A name with spaces needs backquotes.`);
     }
   }
-  endWithoutSemicolon(tokens.length);
-  return structure;
+
+  /** Ends the pending declaration at `endIndex` and reports its missing `;`, unless it is still being typed. */
+  private endWithoutSemicolon(endIndex: number): void {
+    const { pending, out } = this;
+    if (!pending) { return; }
+    pending.endIndex = endIndex;
+    const { line, character } = out.document.positionAt(pending.start.start);
+    if (line < out.document.lineCount - 1 && line !== this.cursorLine) {
+      out.atLine(line, character, out.document.lineAt(line).text.trimEnd().length,
+        "Missing ';' at end of variable declaration.");
+    }
+    this.pending = undefined;
+  }
+}
+
+/** Builds the structure of the document from its tokens, reporting what is malformed in it. */
+export function scanStructure(
+  tokens: readonly KdicToken[],
+  metadata: MetadataInfo,
+  out: DiagnosticCollector,
+  cursorLine: number | undefined,
+): Structure {
+  return new StructureScanner(tokens, metadata, out, cursorLine).scan();
 }

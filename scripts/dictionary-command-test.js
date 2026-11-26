@@ -79,10 +79,14 @@ else fs.writeFileSync(target, 'Dictionary Mock { Categorical value; };\\n');
     Module._load = function(request, ...args) {
       return request === 'vscode' ? vscode : originalLoad.call(this, request, ...args);
     };
-    require('../out/dictionary-creation').registerDictionaryCreation({ subscriptions: [] }, channel, () => {}, async found => {
-      assert.strictEqual(found, binary);
-      versionChecks++;
-      fs.writeFileSync(checked, '');
+    require('../out/dictionary-creation').registerDictionaryCreation({ subscriptions: [] }, {
+      output: channel,
+      trace: () => {},
+      checkVersion: async found => {
+        assert.strictEqual(found, binary);
+        versionChecks++;
+        fs.writeFileSync(checked, '');
+      },
     });
   } finally {
     Module._load = originalLoad;

@@ -5,8 +5,9 @@ applyTo: "src/**"
 
 # Extending the kdic Extension
 
-See `.github/copilot-instructions.md` for the module map. Only `extension.ts`, `language-features.ts`,
-`diagnostics-controller.ts`, `carriage-returns.ts` and `dictionary-creation.ts` may import `vscode`.
+See `.github/copilot-instructions.md` for the module map and the rules of code quality (simple, readable,
+commented, no duplication: they apply to every change below). Only `extension.ts`, `language-features.ts`,
+`diagnostics-controller.ts`, `carriage-returns.ts`, `dictionary-creation.ts` and `khiops-services.ts` may import `vscode`.
 
 The reference is the Khiops version documented on khiops.org (section "Khiops version of reference" of
 `.github/copilot-instructions.md`, with what to check before a tag or a new version). The Khiops binary is the
@@ -90,3 +91,13 @@ If no binary is found, built-in diagnostics must remain available.
 - To search braces, parentheses or `;` in text, use `maskQuoted(text, resetAtNewline)` first and search the
   result: quoted text is blanked, offsets and line breaks are preserved.
 - Prefer tokens (`tokenizeKdic`) over regexes when a check must not be fooled by strings or comments.
+
+## Before finishing a change
+
+1. Reread the modules you touched as a whole, and the ones next to them that do something similar, and simplify
+   (see "Code quality" in `.github/copilot-instructions.md`): no duplicated logic, short functions, a comment on
+   every module and every function.
+2. Run `npm test`. After a change to a check, also run the corpus check
+   (`node scripts/smoke-test.js --expected corpus-expectations.json`).
+3. Update the docs the change affects: the module tables, and the list at the top of `src/validator.ts` when the
+   pipeline changes.

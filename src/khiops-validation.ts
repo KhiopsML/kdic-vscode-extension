@@ -3,17 +3,12 @@
  *
  * Free of any VS Code dependency.
  */
-import { isNameToken, tokenName, tokenizeKdic, type KdicToken } from './kdic-lexer';
-import { KdicTextDocument } from './kdic-text-document';
-import { DERIVATION_RULES } from './derivation-rules';
-import { buildRuleMaps } from './rule-maps';
+import { isNameToken, tokenName, type KdicToken } from './kdic-lexer';
+import { RULE_MAPS } from './rule-maps';
 import { isSymbol } from './validation/call-tree';
-import { DiagnosticCollector } from './validation/diagnostics';
-import { scanMetadata } from './validation/metadata';
 import { operandSiteAt } from './validation/operand-site';
-import { scanStructure, type Declaration, type Dictionary, type Structure } from './validation/structure';
-
-const RULES = buildRuleMaps(DERIVATION_RULES);
+import { scanDocument, type ScannedDocument } from './validation/scan-document';
+import type { Declaration, Dictionary } from './validation/structure';
 
 export interface KhiopsErrorLocation {
   /** Zero-based line of the error in the dictionary file. */
@@ -45,20 +40,6 @@ export function khiopsErrorMessages(output: string): string[] {
 const VARIABLE_NOT_FOUND = /\bVariable (.+) not found \(in dictionary (.+)\)$/i;
 /** `Dictionary D : Variable v : …` — an error about the declaration of v. */
 const DECLARED_VARIABLE = /\bDictionary (.+?) : Variable (.+?) : /i;
-
-/** The tokens of a document (comments dropped) and the dictionaries they form. */
-interface ScannedDocument {
-  document: KdicTextDocument;
-  tokens: KdicToken[];
-  structure: Structure;
-}
-
-function scanDocument(text: string): ScannedDocument {
-  const document = new KdicTextDocument(text);
-  const ignored = new DiagnosticCollector(document); // only the structure is of interest here
-  const tokens = tokenizeKdic(text).filter(token => token.kind !== 'comment');
-  return { document, tokens, structure: scanStructure(tokens, scanMetadata(tokens, ignored), ignored, undefined) };
-}
 
 /** The declarations of every dictionary called `dictionaryName`, in document order. */
 function declarationsOf(scan: ScannedDocument, dictionaryName: string): Declaration[] {
@@ -124,7 +105,7 @@ class ErrorLocator {
     const { tokens, structure } = this.scan;
     let start = index;
     while (isSymbol(tokens[start - 1], '.')) { start--; }
-    const scope = operandSiteAt(structure, tokens, RULES, tokens[start].start, index - start)?.scope;
+    const scope = operandSiteAt(structure, tokens, RULE_MAPS, tokens[start].start, index - start)?.scope;
     const name = (scope?.dictionary ?? dictionary).header.name;
     return name && tokenName(name);
   }

@@ -150,6 +150,12 @@ The Khiops binary, not the web site, is the authority on behavior, and the site 
 before writing a rule. The names, `VarKey` and multi-table schema rules were measured on Khiops 11.0.3-a.0 (a
 pre-release); the corpus (`corpus-expectations.json`) was checked with the same binary.
 
+**Exception:** the 12 instance-building rules (`BuildEntity` … `BuildTableFromJson`, `detail: 'instance building'` in
+`DERIVATION_RULES`) follow the documentation of the next Khiops release (branch `194-document-instance-creation-derivation-rules`
+of `KhiopsML/khiops-doc`), not 11.0.2, which does not know them; the 11.0.3-a.0 pre-release does, except `BuildTemporalJoin`
+(`semanticallyVerified: false`). When a Khiops release documents them, check the rules against that release and drop
+`semanticallyVerified: false` once the binary accepts `BuildTemporalJoin`.
+
 **Before creating a tag or a new version** (`npm version`, `vsce package` or publish, a GitHub release), check that version:
 1. Compare the version above with the `Latest` release. If it is newer, read what changed in its dictionary pages
    (dictionary files, derivation rules, metadata, variable blocks, multi-table schemas) and update `DERIVATION_RULES`,

@@ -14,6 +14,7 @@ Edit `.kdic` files with syntax highlighting and receive diagnostics directly in 
 - Snippets for common dictionary declarations and table relationships
 - Built-in diagnostics for common structural and type errors
 - Optional native Khiops diagnostics on save or auto-save
+- Create a Khiops dictionary from a data file, with or without a header
 - Support for single-table and multi-table dictionary files
 
 ## Quick Start
@@ -24,6 +25,12 @@ Edit `.kdic` files with syntax highlighting and receive diagnostics directly in 
 4. Install Khiops and configure `kdic.khiopsPath` if you also want native Khiops validation.
 
 The extension does not require a Khiops installation for syntax support or built-in validation. If no Khiops binary is found, the extension continues to provide its built-in diagnostics.
+
+## Create a Dictionary from a Data File
+
+With Khiops installed, choose **Create Khiops Dictionary from This File** from the Explorer file context menu, an editor tab's context menu, or the Command Palette. The palette uses the active file, or prompts for a file when no editor is active. Choose whether the first line contains column names or data.
+
+The source must be a local file on the extension host, not a `.kdic`. The `.kdic` is created next to it, replacing the source's final extension. You are asked before an existing dictionary is replaced. Errors are shown in a notification; for a failed Khiops run, details are available in the **Khiops** output channel. An existing dictionary is preserved when creation fails. Paths containing line breaks cannot be used. The command uses `kdic.khiopsPath`, or the automatic locations below when it is empty; it is available even when native validation is disabled.
 
 ## Native Khiops Validation
 
@@ -51,6 +58,12 @@ Automatic discovery uses the following paths:
 4. `%KHIOPS_HOME%\\bin\\MODL.exe` on Windows
 
 Built-in diagnostics are produced while editing and Khiops runs on an eligible save only when the built-in validator reports no errors. Built-in warnings do not prevent the native run.
+
+### Runtime Version Check
+
+Before native validation or dictionary creation first uses an executable, the extension runs it with `-v` and compares its full version with the documentation reference listed under [Requirements](#requirements). Any difference, including a newer release or a prerelease/build suffix, triggers a non-blocking warning, not a declaration of incompatibility. **Show Output** reveals both versions and the executable path in the **Khiops** output channel. Built-in checks remain unchanged.
+
+Both features share one check per executable path per extension activation, with a five-second timeout. Detection failures also warn and provide output details, but the operation still proceeds. No new setting is needed. Restart the extension to check again after replacing an executable in place.
 
 ### Settings
 

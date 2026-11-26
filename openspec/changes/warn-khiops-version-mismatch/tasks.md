@@ -1,0 +1,22 @@
+# Tasks
+
+## 1. Reference and version detection
+
+- [x] 1.1 Add `KHIOPS_REFERENCE_VERSION = '11.0.2'` and a typed asynchronous `readKhiopsVersion(binary, trace)` to `src/khiops-runner.ts`. Run only `-v`, capture stdout/stderr with a five-second timeout and 64 KiB output bound, preserve full version suffixes, and report start, timeout, non-zero status and parsing failures explicitly. Reuse platform launch/options handling without changing batch behavior. Add `scripts/khiops-version-test.js` to the `npm test` chain, testing product-line parsing (CRLF/whitespace, release, prerelease/build, repeated equal and conflicting versions, empty/malformed/unrelated output), stderr, start failure, non-zero exit and a measured timeout. Verify the focused script and existing Khiops parsing/builder tests pass after compilation; include Windows `.cmd` mock coverage on Windows.
+- [x] 1.2 Update the reference-version maintenance checklist in `.github/copilot-instructions.md` to include the new code constant, retaining the distinction between the documented 11.0.2 reference and the measured 11.0.3-a.0 binary. Verify the checklist and both READMEs still name the same documentation reference and do not claim that a mismatch proves incompatibility.
+
+## 2. Shared advisory check and native operations
+
+- [x] 2.1 In `src/extension.ts`, own one session-scoped, path-keyed in-flight promise cache for version checks, and pass the shared async callback to `DiagnosticsController` and `registerDictionaryCreation`. Warn once per path on any version difference or detection failure, append the required details to the shared Khiops output channel with debug off, and offer Show Output without awaiting dismissal. Await the check only before an eligible native batch run or confirmed creation, rechecking native document/configuration currency after the probe. Update directly dependent signatures and mocks so version invocations are distinguished from batch runs. Verify compilation and the existing standalone command tests; extend those tests to verify cancellation/ineligible input never invokes the check and both header choices invoke it before the builder.
+- [x] 2.2 Extend `scripts/vscode-host-tests/run.js` with version-aware mock executables and target-extension prompt mocks. Assert no warning on a matching version; both version identifiers and continued validation/creation on mismatch; visible detection failure with continued operation; shared single probe/warning for repeated and concurrent uses of one path across both features (including a failed probe); independent checking of another path and cached reuse when switching back. Verify no probe for skipped validation or cancelled creation, no version diagnostics, and no stale native run after a pending probe if the document changes or validation is disabled/reconfigured. Keep a version warning unresolved while asserting the batch run completes to prove dismissal is not awaited. Verify the host suite passes in an isolated profile using the documented source-only host command.
+- [x] 2.3 Document the advisory comparison in `README.md` and `README.extension.md`: documented reference, both native features, any difference including prereleases, once per binary path per activation, detection failure and Show Output, no blocking and no new setting. Update the integration description in `.github/copilot-instructions.md` to describe the shared check and its lifecycle. Verify by reading these sections against the spec and checking that the five-module VS Code boundary remains unchanged.
+
+## 3. Integration verification
+
+- [x] 3.1 Run `npm test` and the isolated VS Code host suite with the completed implementation. Verify all scripts pass, existing validation gates and creation outcomes remain intact, and no temporary files or test processes remain after the test run.
+- [x] 3.2 Use the real installed Khiops executable to confirm the new helper reads `11.0.3-a.0` intact and compares it against `11.0.2`. Confirm an eligible native operation warns with both versions, still completes, and does not repeat the warning for the same path during that activation. Run `openspec validate warn-khiops-version-mismatch --strict` and verify it passes.
+
+## Workflow follow-up
+
+- Review and archive the completed dictionary-creation change separately before or alongside this change; do not merge its task tracking into this one.
+- After implementation and verification, review this change before archiving.

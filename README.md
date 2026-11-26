@@ -8,6 +8,14 @@ Built-in validation is intentionally best-effort and structural. The native Khio
 
 ## Features
 
+### Create a dictionary from a data file
+
+Install Khiops, then choose **Create Khiops Dictionary from This File** from the Explorer file context menu, an editor tab's context menu, or the Command Palette. The palette uses the active file, or prompts for a file when no editor is active. Choose whether the first line contains column names or data.
+
+The source must be a local file on the extension host, not a `.kdic`. Khiops creates a `.kdic` beside it, replacing its final extension. The extension asks before replacing an existing dictionary. Errors are shown in a notification; for a failed Khiops run, details are available in the **Khiops** output channel. An existing dictionary is preserved when creation fails. Paths containing line breaks cannot be used.
+
+Creation uses `kdic.khiopsPath` or, when it is empty, the platform's automatic location described below. It works independently of `kdic.enableKhiopsValidation`.
+
 ### Syntax Highlighting
 
 - **Keywords**: `Dictionary`, `Root`, `Unused`
@@ -125,6 +133,10 @@ Binary discovery order:
 
 If no binary is found, the extension falls back automatically to built-in validation.
 
+Before a binary's first native validation or dictionary creation, the extension runs it with `-v` and compares its full version with the documentation reference stated above. Any difference, including a newer release or a prerelease/build suffix, produces an advisory warning. **Show Output** reveals both versions and the executable path in the **Khiops** output channel. This does not claim incompatibility, change built-in checks or block the requested operation.
+
+The check is shared by both features, once per executable path per extension activation, with a five-second timeout. If detection fails, a warning and output details explain why, and the operation still proceeds. There is no new setting. Restart the extension to check again after replacing an executable in place.
+
 Recognised structural patterns include:
 - Dictionary headers with optional key list and metadata: `Root Dictionary Foo (key1, key2) <meta> {`
   - After the dictionary name, only a key list `(…)`, metadata tags `<…>`, and/or an opening brace `{` are valid
@@ -194,13 +206,29 @@ KDIC_VSCODE_TEST_EXTENSIONS="$test_dir/extensions" "/Applications/Visual Studio 
 
 The temporary profile and packaged extension remain in `test_dir` for inspection.
 
+For a source-only host run without packaging, compile first, create a fresh `test_dir` as above, and run:
+
+```bash
+"/Applications/Visual Studio Code.app/Contents/MacOS/Code" \
+  --extensionDevelopmentPath="$root" \
+  --extensionDevelopmentPath="$root/scripts/vscode-host-tests" \
+  --extensionTestsPath="$root/scripts/vscode-host-tests/run.js" \
+  --user-data-dir="$test_dir/user" --extensions-dir="$test_dir/extensions" \
+  --disable-workspace-trust --skip-welcome --skip-release-notes
+```
+
+The host suite covers diagnostics and dictionary creation (a POSIX mock executable, with prompts mocked but real command registration, file writes and editor opening).
+
+It also tests version warnings and the shared probe cache. On macOS, set `KDIC_VSCODE_REAL_KHIOPS` to the installed executable when running the host suite to also verify the measured runtime (currently `11.0.3-a.0`) with two real dictionary creations.
+
 To also check the extension on a directory of real dictionaries (for example the `LearningTest` corpus), set `KDIC_VSCODE_CORPUS` to it in the environment of the second command. Each `.kdic` file is opened, never saved, and the diagnostics VS Code shows must be those of the built-in validator; the real Khiops binary is then run on a few fixtures to check that its errors land on the right lines. It takes about ten minutes for 3,300 files. Rebuild and reinstall the packaged extension first: the test runs the installed copy, not the sources.
 
 ### Project structure
 
 | Path | Content |
 | ---- | ------- |
-| `src/extension.ts` | Entry point: registers language features and diagnostics |
+| `src/extension.ts` | Entry point: registers language features, diagnostics and dictionary creation |
+| `src/dictionary-creation.ts`, `src/dictionary-builder.ts` | Dictionary creation command and Khiops scenario |
 | `src/language-features.ts`, `src/operand-completion.ts`, `src/language-data.ts`, `src/derivation-rules.ts` | Completion and hover, with their data (keywords, types, derivation rules) |
 | `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save |
 | `src/validator.ts`, `src/validation/` | Built-in validation: one small module per kind of check |

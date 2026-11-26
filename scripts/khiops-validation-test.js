@@ -2,7 +2,16 @@
 'use strict';
 
 const assert = require('assert');
-const { parseKhiopsErrorLocations } = require('../out/khiops-validation');
+const { khiopsErrorMessages, parseKhiopsErrorLocations } = require('../out/khiops-validation');
+
+assert.deepStrictEqual(khiopsErrorMessages([
+  'Khiops.log\tDatabase /tmp/error : data : Recognized variable types: 1 Numerical',
+  'Khiops.log\twarning : ignore this warning',
+  'Khiops.log\terror : Cannot open input',
+  'fatal error : Batch mode failure',
+  'Khiops.log\tfatal error : More details',
+].join('\r\n')), ['Cannot open input', 'Batch mode failure', 'More details']);
+assert.deepStrictEqual(khiopsErrorMessages(''), []);
 
 const documentText = [
   'Root Dictionary First {',

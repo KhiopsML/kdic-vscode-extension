@@ -5,15 +5,17 @@ VS Code extension providing language support for `.kdic` files (Khiops dictionar
 
 ## Architecture
 
-Only four modules import `vscode`; everything else is plain TypeScript that the unit tests and
+Only five modules import `vscode`; everything else is plain TypeScript that the unit tests and
 the smoke-test CLI load directly from `out/`.
 
 | Module | Role |
 |---|---|
-| `src/extension.ts` | `activate()`: registers the language features and the diagnostics controller *(vscode)* |
+| `src/extension.ts` | `activate()`: registers the language features, diagnostics controller and dictionary creation *(vscode)* |
 | `src/language-features.ts` | Completion and hover providers *(vscode)* |
 | `src/diagnostics-controller.ts` | Built-in diagnostics while editing, native Khiops diagnostics on save *(vscode)* |
 | `src/carriage-returns.ts` | Detects files holding isolated `\r`, for which built-in diagnostics are off *(imports vscode)* |
+| `src/dictionary-creation.ts` | Command UI for creating a dictionary from a data file *(vscode)* |
+| `src/dictionary-builder.ts` | Builds the Khiops creation scenario and safely publishes the result |
 | `src/kdic-text-document.ts` | `KdicTextDocument`: plain text with a line index (`KdicDocument`; used by tests, the CLI and Khiops-output parsing) |
 | `src/derivation-rules.ts` | `DERIVATION_RULES`: ~300 built-in rules (completion, hover, type checking) |
 | `src/date-time-formats.ts` | `formatsOf()`, `isValidFormat()`: the date, time, timestamp and timestamp-tz formats Khiops documents |
@@ -80,6 +82,16 @@ and `operand-site.ts` (what is known of the operand at an offset, used by `opera
   no *error* (warnings do not block). Runs are serialized; the result of a run on an outdated
   version is discarded.
 - If no Khiops binary is found, built-in diagnostics remain the fallback.
+- Dictionary creation is available from the Explorer, editor tab and Command Palette; it asks whether
+  the data has a header, uses `kdic.khiopsPath` independently of validation settings, and reports
+  errors in a notification, with failed run output in the shared `Khiops` output channel.
+- `extension.ts` shares an in-flight version-check cache between both features, once per resolved
+  executable path per activation. Before an eligible batch run, `readKhiopsVersion()` invokes `-v`
+  with a five-second timeout and compares the full version with `KHIOPS_REFERENCE_VERSION`.
+  Any difference or detection failure warns without awaiting dismissal or publishing diagnostics;
+  details and Show Output use the shared channel even with debug traces off. Checks are not retried
+  until the next activation for that path. Native validation rechecks document/configuration currency
+  after waiting; cancelled creation never probes.
 
 Settings: `kdic.enableKhiopsValidation`, `kdic.runKhiopsOnAutoSave`, `kdic.enableDebugTraces`, `kdic.khiopsPath`.
 
@@ -128,7 +140,9 @@ pre-release); the corpus (`corpus-expectations.json`) was checked with the same 
    the types, the metadata keys and the checks to match.
 2. Run the corpus check with a Khiops binary of that version: `node scripts/smoke-test.js --expected corpus-expectations.json`,
    then `--update-expected` for what changed. No error may be reported on a file that Khiops accepts.
-3. Write the new version in `README.md` (twice), `README.extension.md` and in this section.
+3. Write the new version in `README.md` (twice), `README.extension.md`, in this section and in
+   `KHIOPS_REFERENCE_VERSION` in `src/khiops-runner.ts`. This constant targets the documented version,
+   not the binary used for individual behavior measurements.
 
 ## Temporary workarounds
 

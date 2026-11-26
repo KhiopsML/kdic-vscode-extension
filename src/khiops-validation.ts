@@ -25,8 +25,16 @@ export interface KhiopsErrorLocation {
 const ERROR_WITH_LINE = /error\s*:\s*.*?Line\s+(\d+)\s*:\s*(.+)$/;
 /** Any other `error : message` line. */
 const ERROR = /error\s*:\s*(.+)$/;
+const PROCESS_ERROR = /^\s*(?:Khiops\.log\s+)?(?:fatal\s+)?error\s*:\s*(.+)$/i;
 /** Summary lines that repeat errors already reported individually. */
 const SUMMARY = /Errors detected during parsing|Read cancelled/i;
+
+/** Returns errors printed by Khiops without treating ordinary output as an error. */
+export function khiopsErrorMessages(output: string): string[] {
+  return output.split(/\r?\n/)
+    .map(line => PROCESS_ERROR.exec(line)?.[1].trim())
+    .filter((message): message is string => Boolean(message));
+}
 
 /*
  * Khiops prints names decoded: no backquotes, a doubled backquote written once, and

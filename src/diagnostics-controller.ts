@@ -12,7 +12,7 @@
 import * as vscode from 'vscode';
 import { fileHasLoneCarriageReturn } from './carriage-returns';
 import { DERIVATION_RULES } from './derivation-rules';
-import { findKhiopsBinary, runKhiops } from './khiops-runner';
+import { findKhiopsBinary, runKhiops, type KhiopsVersionCheck, type Trace } from './khiops-runner';
 import { parseKhiopsErrorLocations } from './khiops-validation';
 import { buildRuleMaps } from './rule-maps';
 import { Severity, validate } from './validator';
@@ -29,7 +29,6 @@ const settings = (): vscode.WorkspaceConfiguration => vscode.workspace.getConfig
 export class DiagnosticsController implements vscode.Disposable {
   private readonly builtIn = vscode.languages.createDiagnosticCollection('kdic');
   private readonly khiops = vscode.languages.createDiagnosticCollection('khiops');
-  private readonly output = vscode.window.createOutputChannel('Khiops');
   private readonly disposables: vscode.Disposable[] = [];
 
   /** The Khiops executable, or undefined when native validation is disabled or Khiops is not installed. */
@@ -44,13 +43,16 @@ export class DiagnosticsController implements vscode.Disposable {
   /** Latest file check of each document, so that a slow, outdated check cannot overwrite a newer one. */
   private readonly fileChecks = new Map<string, number>();
 
-  constructor() {
+  constructor(
+    private readonly output: vscode.OutputChannel, private readonly trace: Trace,
+    private readonly checkVersion: KhiopsVersionCheck,
+  ) {
     if (this.debugTracesEnabled()) { this.output.show(true); }
     this.refreshKhiops();
 
     const workspace = vscode.workspace;
     this.disposables.push(
-      this.builtIn, this.khiops, this.output,
+      this.builtIn, this.khiops,
       workspace.onWillSaveTextDocument(event => {
         if (isKdic(event.document)) { this.saveReasons.set(event.document.uri.toString(), event.reason); }
       }),
@@ -64,6 +66,7 @@ export class DiagnosticsController implements vscode.Disposable {
   }
 
   dispose(): void {
+    this.khiopsPath = undefined;
     for (const timer of this.validateTimers.values()) { clearTimeout(timer); }
     this.disposables.forEach(disposable => disposable.dispose());
   }
@@ -73,11 +76,6 @@ export class DiagnosticsController implements vscode.Disposable {
   private debugTracesEnabled(): boolean {
     return settings().get<boolean>('enableDebugTraces', false);
   }
-
-  /** Writes to the Khiops output channel, when the user enabled debug traces. */
-  private readonly trace = (message: string): void => {
-    if (this.debugTracesEnabled()) { this.output.appendLine(message); }
-  };
 
   /** Locates the Khiops binary according to the settings; without one, only built-in diagnostics remain. */
   private refreshKhiops(): void {
@@ -215,9 +213,11 @@ export class DiagnosticsController implements vscode.Disposable {
   private runNative(document: vscode.TextDocument, binary: string): void {
     const version = document.version;
     const text = document.getText();
-    const isCurrent = (): boolean => !document.isClosed && document.version === version;
+    const isCurrent = (): boolean => !document.isClosed && document.version === version && this.khiopsPath === binary;
 
     this.nativeQueue = this.nativeQueue.then(async () => {
+      if (!isCurrent()) { return; }
+      await this.checkVersion(binary);
       if (!isCurrent()) { return; }
       const output = await runKhiops(binary, document.uri.fsPath, this.trace);
       if (output === undefined) { return; }

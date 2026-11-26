@@ -1,6 +1,6 @@
 'use strict';
 
-// End-to-end tests run inside a real VS Code with the packaged extension installed
+// End-to-end tests run inside a real VS Code with the extension installed or loaded from source
 // (see "Tests in a VS Code host" in README.md).
 
 const assert = require('assert');
@@ -128,8 +128,8 @@ async function testNativeValidation(directory) {
   const uri = vscode.Uri.file(fixture);
   // A mock Khiops that records each run, reports one error, and takes a second when the `slow` file exists.
   const script = process.platform === 'win32'
-    ? `@echo off\r\necho run>>"${runs}"\r\nif exist "${slow}" timeout /t 1 /nobreak >nul\r\necho error : mock native error\r\n`
-    : `#!/bin/sh\nprintf 'run\\n' >> '${runs.replace(/'/g, "'\\''")}'\n[ -f '${slow.replace(/'/g, "'\\''")}' ] && sleep 1\nprintf 'error : mock native error\\n'\n`;
+    ? `@echo off\r\nif "%~1"=="-v" (\r\necho Khiops 11.0.2\r\nexit /b 0\r\n)\r\necho run>>"${runs}"\r\nif exist "${slow}" timeout /t 1 /nobreak >nul\r\necho error : mock native error\r\n`
+    : `#!/bin/sh\nif [ "$1" = "-v" ]; then printf 'Khiops 11.0.2\\n'; exit 0; fi\nprintf 'run\\n' >> '${runs.replace(/'/g, "'\\''")}'\n[ -f '${slow.replace(/'/g, "'\\''")}' ] && sleep 1\nprintf 'error : mock native error\\n'\n`;
   fs.writeFileSync(binary, script, { mode: 0o755 });
   fs.writeFileSync(fixture, 'Dictionary D\n{\n Categorical value;\n};\n');
   const nativeDiagnostics = () => vscode.languages.getDiagnostics(uri).filter(item => item.source === 'khiops');
@@ -167,7 +167,7 @@ async function testNativeValidation(directory) {
       fs.unlinkSync(slow);
     }
 
-    await replaceDocument(document, 'Dictionary D\n{\n nonsense content\n Categorical value;\n};\n');
+    await replaceDocument(document, 'Dictionary D\n{\n 12 apples;\n Categorical value;\n};\n');
     await waitFor(() => diagnostics(uri).some(item => item.severity === vscode.DiagnosticSeverity.Warning),
       'Built-in warning not reported');
     await waitFor(() => nativeDiagnostics().length === 1 && runCount() === 3,
@@ -204,6 +204,114 @@ async function testNativeValidation(directory) {
   }
 }
 
+async function testDictionaryCreation(directory, extension) {
+  if (process.platform === 'win32') {
+    console.log('SKIP dictionary creation host test: POSIX mock executable');
+    return;
+  }
+  const config = vscode.workspace.getConfiguration('kdic');
+  const binary = path.join(directory, 'mock-create');
+  const scenarioFile = path.join(directory, 'creation-scenario');
+  const fail = path.join(directory, 'creation-fail');
+  const one = path.join(directory, 'one.txt');
+  const two = path.join(directory, 'two.txt');
+  const rejected = path.join(directory, 'rejected.txt');
+  const destination = file => file.replace(/\.txt$/, '.kdic');
+  const dictionary = 'Dictionary Created\n{\n Categorical value;\n};\n';
+  const quote = value => "'" + value.replace(/'/g, "'\\''") + "'";
+  fs.writeFileSync(binary, `#!/bin/sh
+if [ "$1" = "-v" ]; then printf 'Khiops 11.0.2\\n'; exit 0; fi
+cp "$3" ${quote(scenarioFile)}
+if [ -f ${quote(fail)} ]; then
+  printf 'error : mock creation error\\n'
+  exit 0
+fi
+target=$(sed -n 's/^ClassFileName //p' "$3")
+printf '%s' ${quote(dictionary)} > "$target"
+`, { mode: 0o755 });
+  for (const file of [one, two, rejected]) { fs.writeFileSync(file, 'value\nexample\n'); }
+
+  // Each extension receives its own API object; mock only this extension's prompts.
+  const api = require('module').createRequire(path.join(extension.extensionPath, 'out', 'extension.js'))('vscode');
+  const original = {
+    showQuickPick: api.window.showQuickPick,
+    showOpenDialog: api.window.showOpenDialog,
+    showWarningMessage: api.window.showWarningMessage,
+    showErrorMessage: api.window.showErrorMessage,
+  };
+  let header = true;
+  let selectedFile;
+  let confirmations = 0;
+  const errors = [];
+  const command = (...args) => vscode.commands.executeCommand('kdic.createDictionaryFromFile', ...args);
+  const scenario = () => fs.readFileSync(scenarioFile, 'utf8');
+  try {
+    api.window.showQuickPick = async choices => choices.find(choice => choice.headerLineUsed === header);
+    api.window.showOpenDialog = async () => selectedFile ? [vscode.Uri.file(selectedFile)] : undefined;
+    api.window.showWarningMessage = async () => { confirmations++; return undefined; };
+    api.window.showErrorMessage = async message => { errors.push(message); return undefined; };
+    await config.update('khiopsPath', binary, vscode.ConfigurationTarget.Global);
+    await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
+
+    await open(two);
+    await command(vscode.Uri.file(one));
+    assert.deepStrictEqual(errors, [], 'Creation reported an error');
+    assert.strictEqual(fs.readFileSync(destination(one), 'utf8'), dictionary);
+    assert.strictEqual(vscode.window.activeTextEditor.document.uri.fsPath, destination(one));
+    assert.ok(scenario().includes(`DatabaseName ${one}\n`));
+    assert.match(scenario(), /HeaderLineUsed true\n/);
+    await pause(500);
+    assert.deepStrictEqual(diagnostics(vscode.Uri.file(destination(one))), []);
+
+    await open(two);
+    header = false;
+    await command();
+    assert.strictEqual(fs.readFileSync(destination(two), 'utf8'), dictionary);
+    assert.strictEqual(vscode.window.activeTextEditor.document.uri.fsPath, destination(two));
+    assert.ok(scenario().includes(`DatabaseName ${two}\n`));
+    assert.match(scenario(), /HeaderLineUsed false\n/);
+
+    fs.unlinkSync(scenarioFile);
+    header = undefined;
+    await command(vscode.Uri.file(one));
+    assert.strictEqual(confirmations, 0, 'Cancelling the header choice prompted for overwrite');
+    assert.strictEqual(fs.readFileSync(destination(one), 'utf8'), dictionary);
+    assert.ok(!fs.existsSync(scenarioFile), 'Cancelling the header choice ran Khiops');
+
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    assert.strictEqual(vscode.window.activeTextEditor, undefined);
+    await command();
+    assert.ok(!fs.existsSync(scenarioFile), 'Cancelling the file picker ran Khiops');
+    header = true;
+    await command(vscode.Uri.parse('untitled:ineligible'));
+    await command(vscode.Uri.file(destination(one)));
+    assert.strictEqual(errors.length, 2);
+    assert.ok(!fs.existsSync(scenarioFile), 'Invalid input ran Khiops');
+
+    selectedFile = rejected;
+    fs.writeFileSync(fail, '');
+    await command();
+    assert.ok(scenario().includes(`DatabaseName ${rejected}\n`));
+    assert.ok(!fs.existsSync(destination(rejected)), 'Failed creation left a dictionary');
+    assert.match(errors.at(-1), /mock creation error/);
+    assert.deepStrictEqual(vscode.languages.getDiagnostics(vscode.Uri.file(rejected)), []);
+
+    fs.unlinkSync(fail);
+    await command();
+    assert.strictEqual(fs.readFileSync(destination(rejected), 'utf8'), dictionary);
+    assert.strictEqual(vscode.window.activeTextEditor.document.uri.fsPath, destination(rejected));
+    assert.strictEqual(errors.length, 3, 'Successful creation reported an error');
+    console.log('PASS dictionary creation: context URI, active file, picker, headers, cancellation and errors');
+  } finally {
+    Object.assign(api.window, original);
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await config.update('khiopsPath', undefined, vscode.ConfigurationTarget.Global);
+    for (const file of [binary, scenarioFile, fail, one, two, rejected, ...[one, two, rejected].map(destination)]) {
+      if (fs.existsSync(file)) { fs.unlinkSync(file); }
+    }
+  }
+}
+
 exports.run = async function run() {
   const config = vscode.workspace.getConfiguration('kdic');
   await config.update('enableKhiopsValidation', false, vscode.ConfigurationTarget.Global);
@@ -213,7 +321,20 @@ exports.run = async function run() {
   if (process.env.KDIC_VSCODE_TEST_EXTENSIONS) {
     assert.ok(extension.extensionPath.startsWith(process.env.KDIC_VSCODE_TEST_EXTENSIONS));
   }
-  await extension.activate();
+  const api = require('module').createRequire(path.join(extension.extensionPath, 'out', 'extension.js'))('vscode');
+  const createOutputChannel = api.window.createOutputChannel;
+  const captured = { lines: [], shown: 0 };
+  api.window.createOutputChannel = (...args) => {
+    const channel = createOutputChannel(...args);
+    if (args[0] !== 'Khiops') { return channel; }
+    return {
+      ...channel,
+      appendLine(line) { captured.lines.push(line); channel.appendLine(line); },
+      show(...options) { captured.shown++; channel.show(...options); },
+    };
+  };
+  try { await extension.activate(); }
+  finally { api.window.createOutputChannel = createOutputChannel; }
   assert.ok(extension.isActive);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kdic-host-fixtures-'));
@@ -221,6 +342,8 @@ exports.run = async function run() {
     await testPlainFile(directory);
     await testIsolatedCarriageReturn(directory);
     await testNativeValidation(directory);
+    await testDictionaryCreation(directory, extension);
+    await require('./version').run(directory, extension, captured, { open, edit, waitFor, pause });
     if (process.env.KDIC_VSCODE_CORPUS) { await require('./corpus').run(process.env.KDIC_VSCODE_CORPUS, directory); }
     console.log('PASS installed VS Code extension');
   } finally {
